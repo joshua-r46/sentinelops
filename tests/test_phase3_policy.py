@@ -23,6 +23,11 @@ class SafetyGateTests(unittest.TestCase):
         decision, risk, *_ = self.policy("restart_service", "postgres")
         self.assertEqual(("REQUIRE_APPROVAL", "R2"), (decision, risk))
 
+    def test_api_restart_requires_human_approval_before_executor_dispatch(self):
+        decision, risk, _, _, snapshot, reversible = self.policy("restart_service", "api")
+        self.assertEqual(("REQUIRE_APPROVAL", "R2", True, "reversible"),
+                         (decision, risk, snapshot, reversible))
+
     def test_budgeted_resource_change_is_r2(self):
         decision, risk, *_ = self.policy("set_resource_limit", "worker", {"cpu": 1, "memory": 512})
         self.assertEqual(("REQUIRE_APPROVAL", "R2"), (decision, risk))

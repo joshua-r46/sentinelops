@@ -1,9 +1,10 @@
 """AgentShield Phase 3 safety gate.
 
-The gate evaluates typed proposals; it is not an executor and has no Docker,
-shell, cloud, target-application, or executor credentials.
+The gate evaluates typed proposals and issues short-lived, signed capabilities
+to the isolated Phase 4 Executor. It has no Docker socket or shell capability.
 """
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -21,6 +22,10 @@ from psycopg.types.json import Jsonb
 
 DB = os.getenv("DATABASE_URL", "postgresql://shopstack:shopstack_dev_password@postgres:5432/shopstack")
 OPA_URL = os.getenv("OPA_URL", "").rstrip("/")
+EXECUTOR_ENABLED = os.getenv("EXECUTOR_ENABLED", "false").lower() == "true"
+EXECUTOR_URL = os.getenv("EXECUTOR_URL", "").rstrip("/")
+EXECUTOR_SHARED_SECRET = os.getenv("EXECUTOR_SHARED_SECRET", "")
+EXECUTION_TOKEN = os.getenv("EXECUTION_TOKEN", "")
 APPROVER_TOKENS = json.loads(os.getenv("APPROVER_TOKENS_JSON", "{}"))
 APPROVAL_TTL_SECONDS = max(60, int(os.getenv("APPROVAL_TTL_SECONDS", "900")))
 COOLDOWN_SECONDS = max(0, int(os.getenv("ACTION_COOLDOWN_SECONDS", "300")))
@@ -133,7 +138,9 @@ def validate_action(action: ActionProposal):
         affected = sorted({target, *[service for service, deps in DEPENDENCIES.items() if target in deps]})
         if target == "postgres":
             return "REQUIRE_APPROVAL", "R2", "Restarting postgres affects dependent services and needs approval.", {"services": affected, "scope": "dependency_impact"}, True, "reversible"
-        return "ALLOW", "R1", "Stateless or dependency action is reversible; executor remains unavailable.", {"services": affected, "scope": "single_service"}, True, "reversible"
+        if target == "api":
+            return "REQUIRE_APPROVAL", "R2", "Restarting api affects live traffic and requires human approval.", {"services": affected, "scope": "single_service"}, True, "reversible"
+        return "ALLOW", "R1", "Stateless or dependency restart is reversible.", {"services": affected, "scope": "single_service"}, True, "reversible"
     if action_type == "set_resource_limit":
         if set(params) != {"cpu", "memory"} or not isinstance(params["cpu"], (int, float)) or not isinstance(params["memory"], int):
             return "BLOCK", "R3", "set_resource_limit requires numeric cpu and integer memory.", {"services": [target], "scope": "none"}, False, "prohibited"
@@ -180,7 +187,9 @@ app = FastAPI(title="AgentShield Safety Gate", lifespan=lifespan)
 
 @app.get("/health")
 def health():
-    return {"service": "agentshield-phase3-policy", "status": "healthy", "mode": "validation_only", "executor": "absent", "opa_configured": bool(OPA_URL)}
+    executor_ready = EXECUTOR_ENABLED and bool(EXECUTOR_URL) and len(EXECUTOR_SHARED_SECRET.encode()) >= 32
+    return {"service": "agentshield-phase3-policy", "status": "healthy", "mode": "validation_and_gated_execution",
+            "executor": "enabled" if executor_ready else "disabled", "opa_configured": bool(OPA_URL)}
 
 @app.post("/actions", status_code=201)
 def propose(request: ProposalRequest):
@@ -217,18 +226,28 @@ def action(action_id: uuid.UUID):
 
 def decide(action_id: uuid.UUID, request: ApprovalRequest, decision: str, token: str | None):
     actor = require_approver(token)
-    row = get_action(action_id)
-    if row["decision"] != "REQUIRE_APPROVAL" or row["status"] != "pending_approval":
-        raise HTTPException(409, "This action is not awaiting approval")
-    if row["approval_expires_at"] and now() > row["approval_expires_at"]:
-        with conn() as c:
-            c.execute("UPDATE agentshield_action_requests SET status='expired',updated_at=%s WHERE id=%s", (now(), action_id))
+    expired = False
+    with conn() as c:
+        # Lock the request and commit the decision + approval record together.
+        # Competing approve/reject requests serialize on this row.
+        row = c.execute("SELECT * FROM agentshield_action_requests WHERE id=%s FOR UPDATE", (action_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Action request not found")
+        if row["decision"] != "REQUIRE_APPROVAL" or row["status"] != "pending_approval":
+            raise HTTPException(409, "This action is not awaiting approval")
+        current = now()
+        if row["approval_expires_at"] and current >= row["approval_expires_at"]:
+            c.execute("UPDATE agentshield_action_requests SET status='expired',updated_at=%s WHERE id=%s AND status='pending_approval'", (current, action_id))
+            expired = True
+        else:
+            status = "approved" if decision == "approved" else "rejected"
+            updated = c.execute("UPDATE agentshield_action_requests SET status=%s,updated_at=%s WHERE id=%s AND status='pending_approval' RETURNING *", (status, current, action_id)).fetchone()
+            if not updated:
+                raise HTTPException(409, "This action was already decided")
+            c.execute("INSERT INTO agentshield_action_approvals (id,action_request_id,decision,actor,note,created_at,proposal_sha256) VALUES (%s,%s,%s,%s,%s,%s,%s)", (uuid.uuid4(), action_id, decision, actor, request.note, current, row["proposal_sha256"]))
+    if expired:
         audit(action_id, "approval_expired", "safety_gate", {})
         raise HTTPException(409, "Approval request expired")
-    status = "approved" if decision == "approved" else "rejected"
-    with conn() as c:
-        c.execute("INSERT INTO agentshield_action_approvals (id,action_request_id,decision,actor,note,created_at,proposal_sha256) VALUES (%s,%s,%s,%s,%s,%s,%s)", (uuid.uuid4(), action_id, decision, actor, request.note, now(), row["proposal_sha256"]))
-        updated = c.execute("UPDATE agentshield_action_requests SET status=%s,updated_at=%s WHERE id=%s RETURNING *", (status, now(), action_id)).fetchone()
     audit(action_id, "approval_" + decision, actor, {"note": request.note, "proposal_sha256": row["proposal_sha256"]})
     return updated
 
@@ -243,14 +262,85 @@ def reject(action_id: uuid.UUID, request: ApprovalRequest, x_approval_token: str
 @app.post("/actions/{action_id}/dry-run")
 def dry_run(action_id: uuid.UUID):
     row = get_action(action_id)
-    audit(action_id, "dry_run_completed", "safety_gate", {"would_mutate": False, "executor": "absent", "proposal_sha256": row["proposal_sha256"]})
-    return {"action_request_id": action_id, "decision": row["decision"], "risk": row["risk"], "would_mutate": False, "executed": False, "executor": "absent"}
+    executor_ready = EXECUTOR_ENABLED and bool(EXECUTOR_URL) and len(EXECUTOR_SHARED_SECRET.encode()) >= 32
+    executor_state = "enabled" if executor_ready else "disabled"
+    audit(action_id, "dry_run_completed", "safety_gate", {"would_mutate": False, "executor": executor_state, "proposal_sha256": row["proposal_sha256"]})
+    return {"action_request_id": action_id, "decision": row["decision"], "risk": row["risk"], "would_mutate": False, "executed": False, "executor": executor_state}
+
+def require_execution_token(token: str | None):
+    if len(EXECUTION_TOKEN.encode()) < 32:
+        raise HTTPException(503, "Operator execution authentication is not configured")
+    if not token or not secrets.compare_digest(token, EXECUTION_TOKEN):
+        raise HTTPException(401 if not token else 403, "Operator execution token is invalid")
 
 @app.post("/actions/{action_id}/execute")
-def execute_denied(action_id: uuid.UUID):
-    get_action(action_id)
-    audit(action_id, "execution_denied", "safety_gate", {"reason": "Phase 3 has no isolated executor"})
-    raise HTTPException(409, "Execution is unavailable: no isolated executor is configured")
+def execute_action(action_id: uuid.UUID, x_execution_token: str | None = Header(default=None)):
+    require_execution_token(x_execution_token)
+    if not EXECUTOR_ENABLED or not EXECUTOR_URL or len(EXECUTOR_SHARED_SECRET.encode()) < 32:
+        raise HTTPException(503, "Execution is unavailable: isolated Executor is disabled or not securely configured")
+    row = get_action(action_id)
+    current = now()
+    if row["decision"] == "REQUIRE_APPROVAL":
+        if row["status"] != "approved":
+            raise HTTPException(409, "A current human approval is required")
+        if not row["approval_expires_at"] or current >= row["approval_expires_at"]:
+            with conn() as c:
+                c.execute("UPDATE agentshield_action_requests SET status='expired',updated_at=%s WHERE id=%s AND status='approved'", (current, action_id))
+            audit(action_id, "approval_expired", "safety_gate", {"at_execution": True})
+            raise HTTPException(409, "Approval expired before execution")
+    elif row["decision"] != "ALLOW" or row["status"] != "validated":
+        raise HTTPException(409, "Action is not in an executable Safety Gate state")
+
+    prior_status = row["status"]
+    # A conditional write is the one-time execution claim. Concurrent requests
+    # cannot both obtain a capability for the same action.
+    with conn() as c:
+        claimed = c.execute("""UPDATE agentshield_action_requests SET status='executing',updated_at=%s
+          WHERE id=%s AND ((decision='ALLOW' AND status='validated') OR
+          (decision='REQUIRE_APPROVAL' AND status='approved' AND approval_expires_at > %s)) RETURNING *""",
+          (current, action_id, current)).fetchone()
+    if not claimed:
+        raise HTTPException(409, "Action was claimed or changed before execution")
+
+    issued = now()
+    grant = {
+        "action_id": str(action_id),
+        "proposal_sha256": row["proposal_sha256"],
+        "action_type": row["action_type"],
+        "parameters": row["parameters"],
+        "decision": row["decision"],
+        "action_status": prior_status,
+        "approval_expires_at": row["approval_expires_at"].isoformat() if row["approval_expires_at"] else None,
+        "issued_at": issued.isoformat(),
+        "expires_at": min(issued + timedelta(seconds=30), row["approval_expires_at"]).isoformat() if row["approval_expires_at"] else (issued + timedelta(seconds=30)).isoformat(),
+        "nonce": secrets.token_urlsafe(32),
+    }
+    signature = hmac.new(EXECUTOR_SHARED_SECRET.encode(), canonical(grant).encode(), hashlib.sha256).hexdigest()
+    try:
+        response = httpx.post(EXECUTOR_URL + "/execute", json=grant,
+                              headers={"X-Gate-Signature": signature}, timeout=35, trust_env=False)
+        if response.status_code >= 400:
+            body = response.json()
+            detail = body.get("detail") if isinstance(body, dict) else None
+            if isinstance(detail, dict) and detail.get("action_id") == str(action_id):
+                result = detail
+            else:
+                response.raise_for_status()
+        else:
+            result = response.json()
+    except Exception as exc:
+        with conn() as c:
+            c.execute("UPDATE agentshield_action_requests SET status='execution_failed',updated_at=%s WHERE id=%s AND status='executing'", (now(), action_id))
+        audit(action_id, "execution_failed", "safety_gate", {"error": type(exc).__name__, "proposal_sha256": row["proposal_sha256"]})
+        raise HTTPException(502, "Executor did not confirm an accepted result") from exc
+
+    final_status = "executed" if result.get("status") == "executed" and result.get("executed") is True else "execution_failed"
+    with conn() as c:
+        c.execute("UPDATE agentshield_action_requests SET status=%s,dry_run=FALSE,updated_at=%s WHERE id=%s AND status='executing'", (final_status, now(), action_id))
+    audit(action_id, "execution_" + final_status, "safety_gate", {"proposal_sha256": row["proposal_sha256"], "executor_result": result})
+    if final_status != "executed":
+        raise HTTPException(502, detail={"message": "Executor did not accept the action", "result": result})
+    return result
 
 @app.get("/actions/{action_id}/audit")
 def audit_log(action_id: uuid.UUID):

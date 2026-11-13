@@ -98,6 +98,43 @@ services:
       deployer:
         condition: service_started
 
+  docker-socket-proxy:
+    profiles: ["phase4"]
+    build:
+      context: ./executor
+      dockerfile: Dockerfile.socket-proxy
+    container_name: agentshield-docker-filter
+    restart: unless-stopped
+    user: "65532:65532"
+    group_add:
+      - "${DOCKER_GID:-999}"
+    environment:
+      ALLOWED_CONTAINER_NAME: ${DOCKER_TARGET_CONTAINER:-shopstack-api}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - executor_socket
+
+  agentshield-executor:
+    profiles: ["phase4"]
+    build: ./executor
+    image: agentshield:phase4-executor
+    container_name: agentshield-phase4-executor
+    restart: unless-stopped
+    environment:
+      EXECUTOR_ENABLED: ${EXECUTOR_ENABLED:-false}
+      EXECUTOR_SHARED_SECRET: ${EXECUTOR_SHARED_SECRET:-}
+      EXECUTOR_STATE_DB: /data/executor.sqlite3
+      DOCKER_PROXY_URL: http://docker-socket-proxy:2375
+      DOCKER_TARGET_CONTAINER: ${DOCKER_TARGET_CONTAINER:-shopstack-api}
+    volumes:
+      - executor_state:/data
+    networks:
+      - default
+      - executor_socket
+    depends_on:
+      - docker-socket-proxy
+
   agentshield-policy:
     build: ./phase3policy
     image: agentshield:phase3-policy
@@ -105,6 +142,10 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://shopstack:shopstack_dev_password@postgres:5432/shopstack
+      EXECUTOR_ENABLED: ${EXECUTOR_ENABLED:-false}
+      EXECUTOR_URL: http://agentshield-executor:8004
+      EXECUTOR_SHARED_SECRET: ${EXECUTOR_SHARED_SECRET:-}
+      EXECUTION_TOKEN: ${EXECUTION_TOKEN:-}
     ports:
       - "8003:8003"
     depends_on:
@@ -114,3 +155,9 @@ services:
 volumes:
   redis_data:
   postgres_data:
+  executor_state:
+
+networks:
+  default:
+  executor_socket:
+    internal: true

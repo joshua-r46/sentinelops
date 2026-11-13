@@ -19,9 +19,10 @@ scale-to-zero, Docker API, rollback, arbitrary URLs, unknown targets, and
 forbidden parameters are BLOCK.
 
 Risk and blast radius are returned and stored with every decision. Consequential
-actions are pending approval. Approval/rejection carries actor and note. Dry-run
-is always non-mutating and audited; execute always returns 409 and audits the
-attempt. Approval never grants infrastructure authority.
+actions are pending approval; API restarts are classified R2. Approval/rejection carries actor and note. Dry-run is always non-mutating and audited. The Phase 4 increment adds a
+separate isolated Executor; execution remains disabled unless explicitly
+configured, and the Executor accepts only its narrow signed action contract.
+Approval remains bound to the exact proposal and expires.
 
 ## API
 
@@ -50,8 +51,7 @@ worker, and deployer containers remained running.
 
 ## Limitations and next boundary
 
-Phase 3 performs no deployment, restart, rollback, traffic change, failure
-injection, Docker call, shell command, URL request, or data mutation outside its
-own governance tables. It does not contact the monitor or LLM. Phase 4 may add
-a separately reviewed least-privilege executor and safe snapshots/rollback;
-this service must remain unable to execute infrastructure actions.
+The Phase 3 policy service itself has no Docker socket or shell access. Phase 4
+adds an isolated Executor behind a route-filtering Docker proxy; see `PHASE4.md`
+for its limited supported action and recovery behavior. The gate and monitor
+remain separate from the Docker socket.

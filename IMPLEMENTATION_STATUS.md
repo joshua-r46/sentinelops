@@ -29,10 +29,8 @@
   read-only socket proxy; the Observer is not granted Docker access.
 - Groq, Cloudflare, and LM Studio adapters are not enabled without provider
   configuration. The existing OpenAI compatibility path remains unchanged.
-- No isolated Executor, Docker socket proxy, snapshot implementation,
-  verifier, recovery/undo workflow, dashboard, SSE, or Telegram integration
-  has been started. These need a separately reviewed scope because they cross
-  execution or external-account boundaries.
+- Dashboard, SSE, and Telegram integrations remain deferred.
+- Independent verification and recovery are not included in the current Phase 4 stage.
 
 ## Validation
 
@@ -41,3 +39,11 @@
 - Safety Gate R0-R3 tests: 6 passed.
 - Tests ran in disposable containers without starting, stopping, or recreating
   the active compose services and without connecting to the persistent database.
+
+
+## Phase 4 increment
+
+- Added a separate, disabled-by-default Executor with short-lived HMAC capabilities, persistent one-use replay protection, a fixed typed restart action, and an allowlisted pre-action snapshot.
+- Added a custom Docker socket proxy that forwards only inspect/restart for `shopstack-api`; only that proxy mounts the Docker socket.
+- The Safety Gate now commits approval decisions atomically and uses a conditional one-time execution claim before issuing a signed grant.
+- No active service was restarted, rebuilt, or otherwise mutated. See `PHASE4.md` for the supported boundary and remaining limitations.
