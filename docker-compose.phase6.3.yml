@@ -1,0 +1,138 @@
+services:
+  api:
+    profiles: ["phase6.3"]
+    build:
+      context: ./api
+      dockerfile: router.Dockerfile
+    image: agentshield-api-router:phase6.3
+    container_name: shopstack-api-router
+    restart: unless-stopped
+    environment:
+      ROUTER_CONTROL_SECRET: ${ROUTER_CONTROL_SECRET:-}
+      ROUTER_INITIAL_VERSION: ${ROUTER_INITIAL_VERSION:-v1}
+      DEPLOYMENT_CATALOG_FILE: /etc/agentshield/deployment-catalog.json
+      ROUTER_STATE_FILE: /var/lib/agentshield/router-state.json
+    volumes:
+      - ./deployment/catalog.json:/etc/agentshield/deployment-catalog.json:ro
+      - phase63_router_state:/var/lib/agentshield
+    ports:
+      - "8000:8000"
+    networks: [default]
+    depends_on:
+      api-v1:
+        condition: service_started
+
+  api-v1:
+    profiles: ["phase6.3"]
+    image: agentshield-api-v1:phase6.3
+    restart: unless-stopped
+    environment: &api-runtime
+      DATABASE_URL: ${SHOPSTACK_API_DATABASE_URL:?Set API_DATABASE_URL in the protected environment}
+      REDIS_URL: ${SHOPSTACK_API_REDIS_URL:?Set API_REDIS_URL in the protected environment}
+      FAILURE_INJECTOR_TOKEN: ${FAILURE_INJECTOR_TOKEN:-}
+    networks: [default]
+
+  api-v2:
+    profiles: ["phase6.3"]
+    image: agentshield-api-v2:phase6.3
+    restart: unless-stopped
+    environment: *api-runtime
+    networks: [default]
+
+  api-v2-bad:
+    profiles: ["phase6.3"]
+    image: agentshield-api-v2-bad:phase6.3
+    restart: unless-stopped
+    environment: *api-runtime
+    networks: [default]
+
+  docker-socket-proxy:
+    profiles: ["phase6.3"]
+    build:
+      context: ./executor
+      dockerfile: Dockerfile.phase6.3-proxy
+    image: agentshield:phase6.3-docker-proxy
+    user: "65532:65532"
+    environment:
+      DOCKER_HOST: ${AGENTSHIELD_DOCKER_HOST:?Set an explicitly approved isolated Docker endpoint}
+      DEPLOYMENT_ENABLED: "true"
+      DEPLOYMENT_CATALOG_FILE: /etc/agentshield/deployment-catalog.json
+      DEPLOYMENT_NETWORK: ${SHOPSTACK_NETWORK:?Set the approved internal Docker network name}
+      API_DATABASE_URL: ${SHOPSTACK_API_DATABASE_URL:?Set API_DATABASE_URL in the protected environment}
+      API_REDIS_URL: ${SHOPSTACK_API_REDIS_URL:?Set API_REDIS_URL in the protected environment}
+      FAILURE_INJECTOR_TOKEN: ${FAILURE_INJECTOR_TOKEN:-}
+      ROUTER_URL: http://api:8000
+      ROUTER_CONTROL_SECRET: ${ROUTER_CONTROL_SECRET:?Set the router control secret}
+      PROXY_AUTH_TOKEN: ${DOCKER_PROXY_TOKEN:?Set the Executor proxy token}
+      ALLOWED_CONTAINER_NAME: ${DOCKER_TARGET_CONTAINER:-shopstack-api-router}
+      DEPLOYMENT_RUN_LABEL_KEY: ${DEPLOYMENT_RUN_LABEL_KEY:-}
+      DEPLOYMENT_RUN_LABEL_VALUE: ${DEPLOYMENT_RUN_LABEL_VALUE:-}
+      DEPLOYMENT_RESOURCE_LABEL_KEY: ${DEPLOYMENT_RESOURCE_LABEL_KEY:-}
+      DEPLOYMENT_RESOURCE_LABEL_VALUE: ${DEPLOYMENT_RESOURCE_LABEL_VALUE:-}
+    volumes:
+      - ./deployment/catalog.json:/etc/agentshield/deployment-catalog.json:ro
+    networks: [default, executor_socket]
+
+  agentshield-executor:
+    profiles: ["phase6.3"]
+    build: ./executor
+    image: agentshield:phase6.3-executor
+    restart: unless-stopped
+    environment:
+      EXECUTOR_ENABLED: ${RECOVERY_EXECUTOR_ENABLED:-false}
+      EXECUTOR_SHARED_SECRET: ${EXECUTOR_SHARED_SECRET:-}
+      EXECUTOR_STATE_DB: /data/executor.sqlite3
+      DOCKER_PROXY_URL: http://docker-socket-proxy:2375
+      DOCKER_PROXY_TOKEN: ${DOCKER_PROXY_TOKEN:-}
+      DEPLOYMENT_CATALOG_FILE: /etc/agentshield/deployment-catalog.json
+      SNAPSHOT_INTEGRITY_KEY_FILE: /run/secrets/snapshot_integrity_key
+    volumes:
+      - phase63_executor_state:/data
+      - ${SNAPSHOT_INTEGRITY_KEY_FILE:?Set snapshot integrity key file}:/run/secrets/snapshot_integrity_key:ro
+      - ./deployment/catalog.json:/etc/agentshield/deployment-catalog.json:ro
+    networks: [default, executor_socket]
+    depends_on: [docker-socket-proxy]
+
+  agentshield-recovery-policy:
+    profiles: ["phase6.3"]
+    build: ./agentshield
+    image: agentshield:phase6.3-recovery-policy
+    command: ["uvicorn", "recovery_policy:app", "--host", "0.0.0.0", "--port", "8007"]
+    environment:
+      DATABASE_URL: ${AGENTSHIELD_DATABASE_URL:?Set the protected AgentShield database URL}
+      SNAPSHOT_INTEGRITY_KEY_FILE: /run/secrets/snapshot_integrity_key
+      RECOVERY_OPERATOR_TOKENS_JSON: ${RECOVERY_OPERATOR_TOKENS_JSON:-{}}
+      RECOVERY_APPROVER_TOKENS_JSON: ${RECOVERY_APPROVER_TOKENS_JSON:-{}}
+      RECOVERY_EXECUTOR_ENABLED: ${RECOVERY_EXECUTOR_ENABLED:-false}
+      RECOVERY_EXECUTOR_URL: http://agentshield-executor:8004
+      RECOVERY_EXECUTOR_SHARED_SECRET: ${EXECUTOR_SHARED_SECRET:-}
+      RECOVERY_VERIFIER_URL: http://agentshield-independent-verifier:8005
+      RECOVERY_VERIFIER_TOKEN: ${VERIFIER_TOKEN:-}
+      RECOVERY_VERIFIER_TIMEOUT_SECONDS: ${RECOVERY_VERIFIER_TIMEOUT_SECONDS:-360}
+    volumes:
+      - ${SNAPSHOT_INTEGRITY_KEY_FILE:?Set snapshot integrity key file}:/run/secrets/snapshot_integrity_key:ro
+    networks: [default]
+
+  agentshield-independent-verifier:
+    profiles: ["phase6.3"]
+    build: ./agentshield
+    image: agentshield:phase6.3-independent-verifier
+    command: ["uvicorn", "verifier:app", "--host", "0.0.0.0", "--port", "8005"]
+    environment:
+      DATABASE_URL: ${AGENTSHIELD_DATABASE_URL:?Set the protected AgentShield database URL}
+      VERIFIER_TOKEN: ${VERIFIER_TOKEN:-}
+      VERIFIER_API_URL: http://api:8000
+      VERIFIER_PROBE_COUNT: ${VERIFIER_PROBE_COUNT:-3}
+      VERIFIER_PROBE_INTERVAL: ${VERIFIER_PROBE_INTERVAL:-1}
+    networks: [default]
+
+volumes:
+  phase63_executor_state:
+  phase63_router_state:
+
+networks:
+  default:
+    external: true
+    name: ${SHOPSTACK_NETWORK:?Set the approved internal Docker network name}
+  executor_socket:
+    internal: true

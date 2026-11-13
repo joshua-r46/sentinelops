@@ -1,0 +1,1283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="shopstack-dashboard-api" content="/dashboard/overview">
+  <meta name="theme-color" content="#e8dcc4">
+  <title>AgentShield | Operations</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --forest: #1f3d28;
+      --sand: #e8dcc4;
+      --forest-03: rgba(31, 61, 40, .03);
+      --forest-05: rgba(31, 61, 40, .05);
+      --forest-08: rgba(31, 61, 40, .08);
+      --forest-12: rgba(31, 61, 40, .12);
+      --forest-18: rgba(31, 61, 40, .18);
+      --forest-26: rgba(31, 61, 40, .26);
+      --forest-52: rgba(31, 61, 40, .52);
+      --forest-72: rgba(31, 61, 40, .72);
+      --sand-08: rgba(232, 220, 196, .08);
+      --sand-14: rgba(232, 220, 196, .14);
+      --sand-22: rgba(232, 220, 196, .22);
+      --sand-42: rgba(232, 220, 196, .42);
+      --sand-66: rgba(232, 220, 196, .66);
+      --sand-84: rgba(232, 220, 196, .84);
+      --sand-94: rgba(232, 220, 196, .94);
+      --radius-sm: 10px;
+      --radius-md: 16px;
+      --radius-lg: 22px;
+      --shadow: 0 14px 40px rgba(31, 61, 40, .08);
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--sand); scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--sand);
+      color: var(--forest);
+      font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, select { color: inherit; font: inherit; }
+    button { -webkit-tap-highlight-color: rgba(31, 61, 40, .12); }
+    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+      outline: 2px solid var(--forest);
+      outline-offset: 3px;
+    }
+    ::selection { background: var(--forest); color: var(--sand); }
+    .shell { display: grid; grid-template-columns: 254px minmax(0, 1fr); min-height: 100vh; }
+    .sidebar {
+      position: sticky;
+      top: 0;
+      display: flex;
+      flex-direction: column;
+      width: 254px;
+      height: 100vh;
+      min-height: 600px;
+      padding: 22px 15px 16px;
+      overflow: hidden;
+      background: var(--forest);
+      color: var(--sand);
+      border-right: 1px solid var(--forest);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; padding: 1px 8px 21px; }
+    .brand-mark {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border: 1px solid var(--sand-42);
+      border-radius: 13px;
+      background: var(--sand-14);
+      color: var(--sand);
+      font-size: 13px;
+      font-weight: 750;
+      letter-spacing: -.04em;
+    }
+    .brand-name { font-size: 15px; font-weight: 720; letter-spacing: -.02em; }
+    .brand-caption { display: block; margin-top: 1px; color: var(--sand-66); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+    .workspace {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 2px 19px;
+      padding: 12px;
+      border: 1px solid var(--sand-22);
+      border-radius: var(--radius-sm);
+      background: var(--sand-08);
+    }
+    .workspace-label { display: block; color: var(--sand-66); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+    .workspace-name { display: block; margin-top: 3px; font-size: 12px; font-weight: 620; }
+    .workspace-mark { color: var(--sand-66); font-size: 15px; }
+    .nav-scroll { flex: 1; overflow-y: auto; padding: 1px 1px 12px; scrollbar-color: var(--sand-42) var(--forest); scrollbar-width: thin; }
+    .nav-group { margin: 15px 9px 7px; color: var(--sand-52); font-size: 9px; font-weight: 740; letter-spacing: .14em; text-transform: uppercase; }
+    .nav-group:first-child { margin-top: 0; }
+    .nav { display: grid; gap: 3px; }
+    .nav button {
+      display: flex;
+      width: 100%;
+      min-height: 38px;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border: 1px solid rgba(232, 220, 196, 0);
+      border-radius: 10px;
+      background: var(--sand-08);
+      color: var(--sand-84);
+      text-align: left;
+      cursor: pointer;
+      transition: background .15s ease, border-color .15s ease, transform .15s ease;
+    }
+    .nav button:hover { background: var(--sand-14); }
+    .nav button:active { transform: translateY(1px); }
+    .nav button[aria-current="page"] {
+      border-color: var(--sand-42);
+      background: var(--sand);
+      color: var(--forest);
+      font-weight: 700;
+    }
+    .nav-icon { width: 19px; text-align: center; font-size: 15px; line-height: 1; }
+    .nav-count {
+      min-width: 22px;
+      margin-left: auto;
+      padding: 1px 6px;
+      border: 1px solid currentColor;
+      border-radius: 99px;
+      color: inherit;
+      font-size: 10px;
+      text-align: center;
+      opacity: .72;
+    }
+    .sidebar-footer { margin-top: 12px; padding: 13px 9px 1px; border-top: 1px solid var(--sand-22); }
+    .read-only-label { display: flex; align-items: center; gap: 8px; color: var(--sand-84); font-size: 11px; font-weight: 620; }
+    .read-only-label .symbol { color: var(--sand-66); }
+    .sidebar-caption { margin-top: 5px; color: var(--sand-52); font-size: 10px; }
+    .main { min-width: 0; }
+    .topbar {
+      position: sticky;
+      z-index: 5;
+      top: 0;
+      display: flex;
+      min-height: 76px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 13px clamp(18px, 3vw, 42px);
+      border-bottom: 1px solid var(--forest-12);
+      background: var(--sand-94);
+      backdrop-filter: blur(14px);
+    }
+    .topbar-left { display: flex; min-width: 0; align-items: center; gap: 12px; }
+    .menu-toggle {
+      display: none;
+      width: 40px;
+      height: 40px;
+      flex: 0 0 auto;
+      border: 1px solid var(--forest-18);
+      border-radius: 12px;
+      background: var(--sand-66);
+      color: var(--forest);
+      cursor: pointer;
+    }
+    .top-kicker { margin-bottom: 1px; color: var(--forest-52); font-size: 9px; font-weight: 760; letter-spacing: .16em; text-transform: uppercase; }
+    .top-title { overflow: hidden; margin: 0; font-size: 16px; font-weight: 730; letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
+    .topbar-right { display: flex; flex: 0 0 auto; align-items: center; gap: 11px; }
+    .updated { color: var(--forest-52); font-size: 10px; white-space: nowrap; }
+    .button {
+      display: inline-flex;
+      min-height: 36px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border: 1px solid var(--forest-26);
+      border-radius: 10px;
+      background: var(--sand-66);
+      color: var(--forest);
+      font-size: 11px;
+      font-weight: 670;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background .15s ease, transform .15s ease, opacity .15s ease;
+    }
+    .button:hover { background: var(--sand); }
+    .button:active { transform: translateY(1px); }
+    .button:disabled { cursor: wait; opacity: .62; }
+    .button-primary { border-color: var(--forest); background: var(--forest); color: var(--sand); }
+    .button-primary:hover { background: var(--forest-72); }
+    .button-small { min-height: 30px; padding: 5px 9px; font-size: 10px; }
+    .content { width: min(1500px, 100%); margin: 0 auto; padding: 26px clamp(18px, 3vw, 42px) 48px; }
+    .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 19px; }
+    .page-heading h2 { margin: 0; font-size: clamp(23px, 2.1vw, 31px); font-weight: 740; letter-spacing: -.045em; line-height: 1.12; }
+    .page-heading p { max-width: 720px; margin: 7px 0 0; color: var(--forest-72); font-size: 12px; }
+    .heading-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+    .pill {
+      display: inline-flex;
+      min-height: 24px;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px;
+      border: 1px solid var(--forest-18);
+      border-radius: 99px;
+      background: var(--forest-05);
+      color: var(--forest);
+      font-size: 9px;
+      font-weight: 740;
+      letter-spacing: .075em;
+      line-height: 1.25;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .pill-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: currentColor; }
+    .pill-quiet { background: var(--sand-66); color: var(--forest-72); }
+    .connection-banner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 17px;
+      padding: 13px 15px;
+      border: 1px solid var(--forest-18);
+      border-radius: var(--radius-md);
+      background: var(--sand-66);
+      box-shadow: 0 8px 24px rgba(31, 61, 40, .04);
+    }
+    .connection-symbol {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 1px solid var(--forest-18);
+      border-radius: 11px;
+      background: var(--forest-08);
+      font-size: 15px;
+      font-weight: 760;
+    }
+    .connection-copy { min-width: 0; flex: 1; }
+    .connection-title { display: block; font-size: 11px; font-weight: 740; }
+    .connection-description { display: block; margin-top: 2px; color: var(--forest-72); font-size: 10px; }
+    .connection-time { color: var(--forest-52); font-size: 9px; white-space: nowrap; }
+    .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; margin-bottom: 14px; }
+    .metric {
+      position: relative;
+      overflow: hidden;
+      min-height: 121px;
+      padding: 15px 16px;
+      border: 1px solid var(--forest-18);
+      border-radius: var(--radius-md);
+      background: var(--sand-66);
+      box-shadow: 0 7px 22px rgba(31, 61, 40, .035);
+    }
+    .metric::after { position: absolute; top: -21px; right: -19px; width: 77px; height: 77px; border: 1px solid var(--forest-12); border-radius: 50%; content: ""; }
+    .metric-label { color: var(--forest-72); font-size: 10px; font-weight: 690; letter-spacing: .035em; }
+    .metric-value { margin-top: 12px; font-size: 27px; font-weight: 760; letter-spacing: -.05em; line-height: 1; }
+    .metric-note { margin-top: 8px; color: var(--forest-52); font-size: 9px; }
+    .content-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, .7fr); gap: 13px; margin-bottom: 13px; }
+    .content-grid-equal { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .card {
+      min-width: 0;
+      border: 1px solid var(--forest-18);
+      border-radius: var(--radius-md);
+      background: var(--sand-66);
+      box-shadow: 0 7px 22px rgba(31, 61, 40, .035);
+    }
+    .card-pad { padding: 16px; }
+    .card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .card-heading h3 { margin: 0; font-size: 12px; font-weight: 740; letter-spacing: -.015em; }
+    .card-heading p { margin: 4px 0 0; color: var(--forest-52); font-size: 10px; }
+    .card-heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+    .service-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+    .service-card {
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid var(--forest-12);
+      border-radius: 12px;
+      background: var(--sand-42);
+    }
+    .service-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 7px; }
+    .service-name { font-size: 11px; font-weight: 740; }
+    .service-status { max-width: 47%; overflow: hidden; text-overflow: ellipsis; }
+    .service-details { display: grid; gap: 5px; margin-top: 10px; }
+    .detail-row { display: flex; justify-content: space-between; gap: 8px; color: var(--forest-52); font-size: 9px; }
+    .detail-row strong { overflow: hidden; color: var(--forest-72); font-weight: 650; text-align: right; text-overflow: ellipsis; }
+    .table-wrap { width: 100%; overflow-x: auto; border-radius: 0 0 var(--radius-md) var(--radius-md); scrollbar-color: var(--forest-26) var(--sand); scrollbar-width: thin; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th {
+      padding: 10px 14px;
+      border-top: 1px solid var(--forest-12);
+      border-bottom: 1px solid var(--forest-18);
+      background: var(--forest-05);
+      color: var(--forest-72);
+      font-size: 9px;
+      font-weight: 760;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    td { padding: 11px 14px; border-bottom: 1px solid var(--forest-12); color: var(--forest-72); font-size: 10px; vertical-align: top; }
+    tr:last-child td { border-bottom: 0; }
+    .cell-primary { display: block; color: var(--forest); font-weight: 700; }
+    .cell-secondary { display: block; overflow-wrap: anywhere; margin-top: 3px; color: var(--forest-52); font-size: 9px; }
+    .table-empty { padding: 0 !important; }
+    .state-block {
+      display: flex;
+      align-items: flex-start;
+      gap: 11px;
+      padding: 15px;
+      border: 1px dashed var(--forest-26);
+      border-radius: 12px;
+      background: var(--forest-03);
+    }
+    .state-icon {
+      display: grid;
+      width: 26px;
+      height: 26px;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 1px solid var(--forest-18);
+      border-radius: 9px;
+      background: var(--sand-66);
+      font-size: 12px;
+      font-weight: 780;
+    }
+    .state-title { display: block; font-size: 10px; font-weight: 740; }
+    .state-detail { display: block; margin-top: 3px; color: var(--forest-72); font-size: 10px; }
+    .state-loading .state-icon { animation: breathe 1.4s ease-in-out infinite; }
+    @keyframes breathe { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+    .capability-list { display: grid; gap: 8px; }
+    .capability-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 11px;
+      border: 1px solid var(--forest-12);
+      border-radius: 11px;
+      background: var(--sand-42);
+    }
+    .capability-name { font-size: 10px; font-weight: 680; }
+    .capability-note { margin-top: 3px; color: var(--forest-52); font-size: 9px; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .input, .select {
+      min-height: 34px;
+      border: 1px solid var(--forest-26);
+      border-radius: 9px;
+      background: var(--sand-84);
+      color: var(--forest);
+      font-size: 10px;
+    }
+    .input { width: min(270px, 100%); padding: 7px 10px; }
+    .input::placeholder { color: var(--forest-52); opacity: 1; }
+    .select { padding: 6px 9px; color-scheme: light; }
+    option { background: var(--sand); color: var(--forest); }
+    .page { display: none; }
+    .page.is-active { display: block; animation: arrive .2s ease both; }
+    @keyframes arrive { from { opacity: .7; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .page-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+    .section-intro {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 14px;
+      padding: 17px;
+      border: 1px solid var(--forest-18);
+      border-radius: var(--radius-md);
+      background: var(--sand-66);
+    }
+    .intro-symbol {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 1px solid var(--forest-18);
+      border-radius: 14px;
+      background: var(--forest-08);
+      font-size: 17px;
+    }
+    .intro-copy h3 { margin: 0; font-size: 12px; font-weight: 740; }
+    .intro-copy p { max-width: 780px; margin: 5px 0 0; color: var(--forest-72); font-size: 10px; }
+    .info-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .info-cell { padding: 12px; border: 1px solid var(--forest-12); border-radius: 11px; background: var(--sand-42); }
+    .info-label { display: block; color: var(--forest-52); font-size: 9px; font-weight: 680; letter-spacing: .07em; text-transform: uppercase; }
+    .info-value { display: block; margin-top: 5px; overflow-wrap: anywhere; font-size: 11px; font-weight: 700; }
+    .page-note { margin: 11px 1px 0; color: var(--forest-52); font-size: 9px; }
+    .stack { display: grid; gap: 12px; }
+    .footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--forest-18); color: var(--forest-52); font-size: 9px; }
+    .backdrop { display: none; }
+    @media (max-width: 1120px) {
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .service-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .content-grid { grid-template-columns: minmax(0, 1fr); }
+    }
+    @media (max-width: 720px) {
+      .shell { display: block; }
+      .sidebar {
+        position: fixed;
+        z-index: 20;
+        top: 0;
+        left: 0;
+        width: min(84vw, 310px);
+        height: 100dvh;
+        min-height: 0;
+        box-shadow: 12px 0 35px rgba(31, 61, 40, .22);
+        transform: translateX(-105%);
+        transition: transform .2s ease;
+      }
+      .sidebar.is-open { transform: translateX(0); }
+      .backdrop {
+        position: fixed;
+        z-index: 19;
+        inset: 0;
+        background: rgba(31, 61, 40, .42);
+      }
+      .backdrop.is-visible { display: block; }
+      .menu-toggle { display: inline-grid; place-items: center; }
+      .topbar { min-height: 66px; padding: 10px 13px; }
+      .topbar-right { gap: 7px; }
+      .updated { display: none; }
+      .content { padding: 19px 13px 36px; }
+      .page-heading { align-items: flex-start; flex-direction: column; gap: 10px; }
+      .heading-meta { justify-content: flex-start; }
+      .connection-banner { align-items: flex-start; padding: 11px; }
+      .connection-time { display: none; }
+      .content-grid-equal { grid-template-columns: minmax(0, 1fr); }
+      .info-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .table-wrap table { min-width: 650px; }
+      .overview-table table { min-width: 590px; }
+    }
+    @media (max-width: 430px) {
+      .top-title { max-width: 160px; font-size: 14px; }
+      .top-kicker { font-size: 8px; }
+      .button { min-height: 34px; padding: 6px 9px; }
+      .button .button-label { display: none; }
+      .metric-grid { gap: 8px; }
+      .metric { min-height: 105px; padding: 12px; }
+      .metric-value { font-size: 23px; }
+      .service-grid { grid-template-columns: minmax(0, 1fr); }
+      .info-grid { grid-template-columns: minmax(0, 1fr); }
+      .card-pad { padding: 13px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar" aria-label="AgentShield navigation">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">AS</span>
+        <span><span class="brand-name">AgentShield</span><span class="brand-caption">Operations console</span></span>
+      </div>
+      <div class="workspace">
+        <span><span class="workspace-label">Workspace</span><span class="workspace-name">ShopStack</span></span>
+        <span class="workspace-mark" aria-hidden="true">⌄</span>
+      </div>
+      <div class="nav-scroll">
+        <div class="nav-group">Operations</div>
+        <nav class="nav" aria-label="Operations">
+          <button type="button" data-page="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">▦</span><span>Overview</span></button>
+          <button type="button" data-page="services"><span class="nav-icon" aria-hidden="true">◉</span><span>Services</span></button>
+        </nav>
+        <div class="nav-group">Incident lifecycle</div>
+        <nav class="nav" aria-label="Incident lifecycle">
+          <button type="button" data-page="incidents"><span class="nav-icon" aria-hidden="true">◎</span><span>Incidents</span><span class="nav-count" data-live-count="incidents">—</span></button>
+          <button type="button" data-page="evidence"><span class="nav-icon" aria-hidden="true">▤</span><span>Evidence</span></button>
+          <button type="button" data-page="diagnosis"><span class="nav-icon" aria-hidden="true">⌕</span><span>AI Diagnosis</span></button>
+          <button type="button" data-page="plans"><span class="nav-icon" aria-hidden="true">↗</span><span>Remediation Plans</span></button>
+          <button type="button" data-page="approvals"><span class="nav-icon" aria-hidden="true">✓</span><span>Approvals</span></button>
+          <button type="button" data-page="executions"><span class="nav-icon" aria-hidden="true">⇢</span><span>Executions</span></button>
+          <button type="button" data-page="verification"><span class="nav-icon" aria-hidden="true">⌖</span><span>Verification</span></button>
+        </nav>
+        <div class="nav-group">Recovery & governance</div>
+        <nav class="nav" aria-label="Recovery and governance">
+          <button type="button" data-page="recovery"><span class="nav-icon" aria-hidden="true">◷</span><span>Snapshots &amp; Recovery</span></button>
+          <button type="button" data-page="policies"><span class="nav-icon" aria-hidden="true">☷</span><span>Policies</span></button>
+          <button type="button" data-page="simulation"><span class="nav-icon" aria-hidden="true">⊙</span><span>Simulation Lab</span></button>
+        </nav>
+      </div>
+      <div class="sidebar-footer">
+        <div class="read-only-label"><span class="symbol" aria-hidden="true">◈</span><span>Read-only dashboard</span></div>
+        <div class="sidebar-caption">Actions remain in authenticated services.</div>
+      </div>
+    </aside>
+    <div class="backdrop" id="backdrop" aria-hidden="true"></div>
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open navigation" aria-expanded="false">☰</button>
+          <div>
+            <div class="top-kicker">ShopStack operations</div>
+            <h1 class="top-title" id="page-title">Overview</h1>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <span class="updated" id="top-updated">Waiting for live API</span>
+          <button type="button" class="button button-primary" id="refresh-button"><span aria-hidden="true">↻</span><span class="button-label">Refresh data</span></button>
+        </div>
+      </header>
+
+      <div class="content">
+        <section class="connection-banner" id="connection-state" role="status" aria-live="polite" data-state="loading">
+          <span class="connection-symbol" id="connection-symbol" aria-hidden="true">…</span>
+          <span class="connection-copy"><strong class="connection-title" id="connection-title">Connecting to live data</strong><span class="connection-description" id="connection-description">Reading the existing dashboard API. No sample data is used.</span></span>
+          <span class="connection-time" id="connection-time">Live API</span>
+          <span class="pill" id="connection-pill">Loading</span>
+        </section>
+
+        <section class="page is-active" id="overview" data-title="Overview" data-subtitle="A live operational view of services, incidents and deployments. Values come from the existing read-only dashboard API.">
+          <div class="page-heading"><div><h2>Overview</h2><p>Live ShopStack signals and AgentShield service availability, in one read-only view.</p></div><div class="heading-meta"><span class="pill"><span class="pill-dot"></span>Live API</span><span class="pill pill-quiet">Read only</span></div></div>
+          <div class="metric-grid" id="overview-metrics" aria-label="Live summary metrics"></div>
+          <div class="content-grid">
+            <section class="card card-pad">
+              <div class="card-heading"><div><h3>Service health</h3><p>Status reported by each connected service.</p></div><button type="button" class="button button-small" data-go="services">View services</button></div>
+              <div class="service-grid" id="overview-services"></div>
+            </section>
+            <section class="card card-pad">
+              <div class="card-heading"><div><h3>Read API coverage</h3><p>Capabilities reported by the dashboard adapter.</p></div><span class="pill pill-quiet">Backend contract</span></div>
+              <div class="capability-list" id="overview-capabilities"></div>
+            </section>
+          </div>
+          <div class="content-grid content-grid-equal">
+            <section class="card">
+              <div class="card-heading card-pad"><div><h3>Recent incidents</h3><p>Observer records returned by the live API.</p></div><button type="button" class="button button-small" data-go="incidents">All incidents</button></div>
+              <div class="table-wrap overview-table"><table><thead><tr><th>Incident</th><th>Service</th><th>State</th><th>Last seen</th></tr></thead><tbody id="overview-incidents"></tbody></table></div>
+            </section>
+            <section class="card">
+              <div class="card-heading card-pad"><div><h3>Deployment ledger</h3><p>Deployer records; this is not Executor action history.</p></div><button type="button" class="button button-small" data-go="executions">View ledger</button></div>
+              <div class="table-wrap overview-table"><table><thead><tr><th>Service / change</th><th>Version</th><th>Status</th></tr></thead><tbody id="overview-deployments"></tbody></table></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="page" id="services" data-title="Services" data-subtitle="Live health and availability reported by the existing service endpoints.">
+          <div class="page-heading"><div><h2>Services</h2><p>Connection state is read from ShopStack and AgentShield service health endpoints.</p></div><div class="heading-meta"><span class="pill"><span class="pill-dot"></span>Live API</span></div></div>
+          <section class="card card-pad"><div class="card-heading"><div><h3>Service directory</h3><p>Only reported fields are shown; unavailable services are not filled with assumed values.</p></div></div><div class="service-grid" id="services-grid"></div></section>
+          <p class="page-note">A responding endpoint is not a full end-to-end service verification.</p>
+        </section>
+
+        <section class="page" id="incidents" data-title="Incidents" data-subtitle="Observer incident records returned by the current live read API.">
+          <div class="page-heading"><div><h2>Incidents</h2><p>Search and filter the incident records supplied by the Observer.</p></div><div class="heading-meta"><span class="pill"><span class="pill-dot"></span>Live API</span><span class="pill pill-quiet" id="incident-total">— records</span></div></div>
+          <div class="page-toolbar"><div><span class="pill pill-quiet">Live Observer records</span></div><div class="toolbar"><input class="input" id="incident-search" type="search" placeholder="Search live incidents" aria-label="Search incidents"><select class="select" id="incident-state" aria-label="Filter incidents by state"><option value="">All states</option></select></div></div>
+          <section class="card"><div class="table-wrap"><table><thead><tr><th>Incident</th><th>Service</th><th>Kind</th><th>State</th><th>First seen</th><th>Last seen</th></tr></thead><tbody id="incident-table"></tbody></table></div></section>
+          <p class="page-note">Rows contain only fields exposed by the dashboard API. Evidence content and operator actions are not included.</p>
+        </section>
+
+        <section class="page" id="evidence" data-title="Evidence" data-subtitle="Evidence is shown only when an authorized read API exposes it to this dashboard.">
+          <div class="page-heading"><div><h2>Evidence</h2><p>Evidence references are kept separate from incident summaries.</p></div><div class="heading-meta"><span class="pill pill-quiet">No fabricated records</span></div></div>
+          <div class="section-intro"><span class="intro-symbol" aria-hidden="true">▤</span><div class="intro-copy"><h3>Evidence content is not exposed by the dashboard read projection</h3><p>The live overview API returns incident identifiers and summaries, but does not return evidence records or evidence bodies. This page will not infer evidence from incident text.</p></div></div>
+          <div class="content-grid content-grid-equal">
+            <section class="card card-pad"><div class="card-heading"><div><h3>Incident references</h3><p>Live incident IDs available for authorized evidence lookup.</p></div><span class="pill"><span class="pill-dot"></span>Live API</span></div><div id="evidence-incidents"></div></section>
+            <section class="card card-pad"><div class="card-heading"><div><h3>Evidence source</h3><p>Read capability status from the dashboard contract.</p></div></div><div id="evidence-state"></div></section>
+          </div>
+        </section>
+
+        <section class="page" id="diagnosis" data-title="AI Diagnosis" data-subtitle="Diagnosis results are not represented as live unless the read API returns them.">
+          <div class="page-heading"><div><h2>AI Diagnosis</h2><p>Diagnosis results and evidence citations are not fabricated or generated in the browser.</p></div><div class="heading-meta"><span class="pill pill-quiet">Read only</span></div></div>
+          <div class="content-grid content-grid-equal">
+            <section class="card card-pad"><div class="card-heading"><div><h3>Diagnosis records</h3><p>Current dashboard API coverage.</p></div></div><div id="diagnosis-state"></div></section>
+            <section class="card card-pad"><div class="card-heading"><div><h3>Diagnosis service</h3><p>Observer service availability does not imply a diagnosis result.</p></div></div><div id="diagnosis-service"></div></section>
+          </div>
+          <p class="page-note">Diagnosis requests and cloud provider configuration remain in their authenticated backend workflow.</p>
+        </section>
+
+        <section class="page" id="plans" data-title="Remediation Plans" data-subtitle="Typed remediation plans are displayed only when returned by the backend read API.">
+          <div class="page-heading"><div><h2>Remediation Plans</h2><p>Proposed actions remain distinct from approval and execution.</p></div><div class="heading-meta"><span class="pill pill-quiet">No browser execution</span></div></div>
+          <div class="content-grid content-grid-equal">
+            <section class="card card-pad"><div class="card-heading"><div><h3>Plan records</h3><p>Current read API coverage.</p></div></div><div id="plans-state"></div></section>
+            <section class="card card-pad"><div class="card-heading"><div><h3>Safety Gate availability</h3><p>Live status is not a plan or authorization.</p></div></div><div id="plans-gate"></div></section>
+          </div>
+        </section>
+
+        <section class="page" id="approvals" data-title="Approvals" data-subtitle="Approval state is shown only when the dashboard API exposes the queue.">
+          <div class="page-heading"><div><h2>Approvals</h2><p>Review state remains controlled by the authenticated Safety Gate approval service.</p></div><div class="heading-meta"><span class="pill pill-quiet">No dashboard decisions</span></div></div>
+          <div class="content-grid content-grid-equal">
+            <section class="card card-pad"><div class="card-heading"><div><h3>Pending approval queue</h3><p>Read-only queue capability.</p></div></div><div id="approvals-state"></div></section>
+            <section class="card card-pad"><div class="card-heading"><div><h3>Safety Gate</h3><p>Live service status reported by the adapter.</p></div></div><div id="approvals-gate"></div></section>
+          </div>
+          <p class="page-note">This dashboard does not approve, reject, or execute action requests.</p>
+        </section>
+
+        <section class="page" id="executions" data-title="Executions" data-subtitle="Deployment records and Executor history are presented as separate data sources.">
+          <div class="page-heading"><div><h2>Executions</h2><p>The deployment ledger is not a substitute for Executor action history.</p></div><div class="heading-meta"><span class="pill"><span class="pill-dot"></span>Deployment API</span></div></div>
+          <div class="content-grid content-grid-equal">
+            <section class="card card-pad"><div class="card-heading"><div><h3>Executor service</h3><p>Live service availability, not an execution result.</p></div></div><div id="execution-service"></div></section>
+            <section class="card card-pad"><div class="card-heading"><div><h3>Executor history</h3><p>Read-only capability status.</p></div></div><div id="execution-history-state"></div></section>
+          </div>
+          <section class="card"><div class="card-heading card-pad"><div><h3>Live deployment ledger</h3><p>Records returned by the existing Deployer API.</p></div><span class="pill"><span class="pill-dot"></span>Live API</span></div><div class="page-toolbar card-pad" style="padding-top:0;padding-bottom:12px"><div></div><input class="input" id="execution-search" type="search" placeholder="Search deployment records" aria-label="Search deployment records"></div><div class="table-wrap"><table><thead><tr><th>Service</th><th>Change</th><th>Previous version</th><th>Version</th><th>Created</th><th>Status</th></tr></thead><tbody id="execution-table"></tbody></table></div></section>
+        </section>
+
+        <section class="page" id="verification" data-title="Verification" data-subtitle="Service availability and independent verification results are different signals.">
+          <div class="page-heading"><div><h2>Verification</h2><p>No recovery will be called verified unless verification data is provided by the backend.</p></div><div class="heading-meta"><span class="pill pill-quiet">Independent checks</span></div></div>
+          <div class="content-grid content-grid-equal">
+            <section class="card card-pad"><div class="card-heading"><div><h3>Verifier service</h3><p>Reported service health.</p></div></div><div id="verification-service"></div></section>
+            <section class="card card-pad"><div class="card-heading"><div><h3>Recovery verification records</h3><p>Phase 6.4 history coverage.</p></div></div><div id="verification-state"></div></section>
+          </div>
+          <div class="section-intro"><span class="intro-symbol" aria-hidden="true">⌖</span><div class="intro-copy"><h3>Verification results are not part of the current dashboard API response</h3><p>Verifier health shows whether its endpoint responds. It does not show deployment identity, readiness, health probes, user journeys, or a successful recovery decision.</p></div></div>
+        </section>
+
+        <section class="page" id="recovery" data-title="Snapshots & Recovery" data-subtitle="Snapshot and recovery service availability from the live health API.">
+          <div class="page-heading"><div><h2>Snapshots &amp; Recovery</h2><p>Catalogues, recovery requests, and restoration results are not inferred from health status.</p></div><div class="heading-meta"><span class="pill"><span class="pill-dot"></span>Service health</span></div></div>
+          <div class="content-grid content-grid-equal">
+            <section class="card card-pad"><div class="card-heading"><div><h3>Snapshot Manager</h3><p>Live health endpoint.</p></div></div><div id="snapshot-service"></div></section>
+            <section class="card card-pad"><div class="card-heading"><div><h3>Recovery Policy</h3><p>Live health endpoint.</p></div></div><div id="recovery-service"></div></section>
+          </div>
+          <div class="content-grid content-grid-equal">
+            <section class="card card-pad"><div class="card-heading"><div><h3>Snapshot catalogue</h3><p>Read-only catalogue capability.</p></div><div id="snapshot-catalog-state"></div></section>
+            <section class="card card-pad"><div class="card-heading"><div><h3>Recovery history</h3><p>Request and audit history capability.</p></div><div id="recovery-history-state"></div></section>
+          </div>
+          <p class="page-note">This page does not create snapshots or request recovery actions.</p>
+        </section>
+
+        <section class="page" id="policies" data-title="Policies" data-subtitle="Safety Gate status and policy details returned by the read-only adapter.">
+          <div class="page-heading"><div><h2>Policies</h2><p>Policy service health does not expose or alter policy decisions.</p></div><div class="heading-meta"><span class="pill"><span class="pill-dot"></span>Live service status</span></div></div>
+          <section class="card card-pad"><div class="card-heading"><div><h3>Safety Gate status</h3><p>Fields reported by the current Safety Gate health endpoint.</p></div></div><div class="info-grid" id="policy-fields"></div></section>
+          <div class="section-intro"><span class="intro-symbol" aria-hidden="true">☷</span><div class="intro-copy"><h3>Policy configuration is read-only here</h3><p>The dashboard does not fetch policy source files or submit action requests. For an active policy response, use the authorized Safety Gate workflow.</p></div></div>
+        </section>
+
+        <section class="page" id="simulation" data-title="Simulation Lab" data-subtitle="Simulation data is never presented as a live infrastructure event.">
+          <div class="page-heading"><div><h2>Simulation Lab</h2><p>Clearly separated test and live records, with no failure-injection control in this dashboard.</p></div><div class="heading-meta"><span class="pill pill-quiet">Simulation view</span></div></div>
+          <div class="section-intro"><span class="intro-symbol" aria-hidden="true">⊙</span><div class="intro-copy"><h3>No simulation feed is exposed by the live overview API</h3><p>No simulated incident or execution records are shown here. This page does not call the failure injector or create test data. The service, incident and deployment records elsewhere in this dashboard are live API responses.</p></div></div>
+          <div class="content-grid content-grid-equal">
+            <section class="card card-pad"><div class="card-heading"><div><h3>Live data boundary</h3><p>Source labels for the current view.</p></div></div><div id="simulation-live-state"></div></section>
+            <section class="card card-pad"><div class="card-heading"><div><h3>Simulation data</h3><p>Test results from a dedicated simulation feed only.</p></div></div><div class="state-block"><span class="state-icon" aria-hidden="true">○</span><span><strong class="state-title">Unavailable</strong><span class="state-detail">No simulation read API is connected. Nothing is substituted or invented.</span></span></div></section>
+          </div>
+        </section>
+
+        <footer class="footer"><span>AgentShield · Read-only operational view</span><span>No dashboard action can bypass Safety Gate authorization.</span></footer>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    "use strict";
+    const apiMeta = document.querySelector('meta[name="shopstack-dashboard-api"]');
+    const DASHBOARD_API = apiMeta && apiMeta.content ? apiMeta.content : "/dashboard/overview";
+    const pageSections = Array.from(document.querySelectorAll(".page"));
+    const navButtons = Array.from(document.querySelectorAll(".nav button[data-page]"));
+    const pageTitle = document.getElementById("page-title");
+    const updatedLabel = document.getElementById("top-updated");
+    const refreshButton = document.getElementById("refresh-button");
+    const sidebar = document.getElementById("sidebar");
+    const backdrop = document.getElementById("backdrop");
+    const menuToggle = document.getElementById("menu-toggle");
+    let dashboardData = null;
+    let requestError = null;
+    let loadTime = null;
+    let isLoading = false;
+
+    const SERVICE_NAMES = {
+      api: "ShopStack API",
+      agentshield: "Observer",
+      deployer: "Deployer",
+      worker: "Worker",
+      safety_gate: "Safety Gate",
+      executor: "Executor",
+      verifier: "Independent Verifier",
+      snapshots: "Snapshot Manager",
+      recovery: "Recovery Policy"
+    };
+    const CAPABILITIES = [
+      ["incident_read", "Incident records", "Observer incident list"],
+      ["deployment_read", "Deployment records", "Deployer ledger"],
+      ["approval_queue_read", "Approval queue", "Pending Safety Gate approvals"],
+      ["execution_history_read", "Executor history", "Action execution records"],
+      ["snapshot_catalog_read", "Snapshot catalogue", "Snapshot records"],
+      ["phase_6_4_verification", "Recovery verification", "Independent verification outcomes"]
+    ];
+    const ICONS = { loading: "…", error: "!", unavailable: "—", empty: "○", live: "●", simulated: "◌" };
+
+    function node(tag, className, text) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (text !== undefined && text !== null) element.textContent = String(text);
+      return element;
+    }
+
+    function clear(element) {
+      while (element && element.firstChild) element.removeChild(element.firstChild);
+    }
+
+    function stateBlock(kind, title, detail) {
+      const block = node("div", "state-block state-" + kind);
+      const icon = node("span", "state-icon", ICONS[kind] || "—");
+      icon.setAttribute("aria-hidden", "true");
+      const copy = node("span", "");
+      copy.append(node("strong", "state-title", title), node("span", "state-detail", detail));
+      block.append(icon, copy);
+      return block;
+    }
+
+    function valueOrDash(value) {
+      return value === undefined || value === null || value === "" ? "Not reported" : String(value);
+    }
+
+    function displayDate(value) {
+      if (!value) return "Not reported";
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
+    }
+
+    function serviceState(item) {
+      if (!item || item.available !== true) return "Unavailable";
+      const data = item.data || {};
+      if (data.enabled === false || data.executor === "disabled") return "Disabled";
+      if (typeof data.status === "string" && data.status) {
+        return data.status.charAt(0).toUpperCase() + data.status.slice(1);
+      }
+      return "Responding";
+    }
+
+    function serviceDetails(item) {
+      if (!item || item.available !== true) return [];
+      const data = item.data || {};
+      const details = [];
+      if (data.mode !== undefined) details.push(["Mode", data.mode]);
+      if (data.executor !== undefined) details.push(["Executor", data.executor]);
+      if (data.opa_configured !== undefined) details.push(["OPA configured", data.opa_configured ? "Yes" : "No"]);
+      if (data.jobs_total !== undefined) details.push(["Jobs total", data.jobs_total]);
+      if (data.processed_orders !== undefined) details.push(["Processed orders", data.processed_orders]);
+      if (data.failed_orders !== undefined) details.push(["Failed orders", data.failed_orders]);
+      if (item.http_status !== undefined && item.http_status !== null) details.push(["HTTP status", item.http_status]);
+      return details;
+    }
+
+    function renderServiceCard(name, item) {
+      const card = node("article", "service-card");
+      const top = node("div", "service-top");
+      top.append(node("span", "service-name", name));
+      top.append(node("span", "pill service-status", serviceState(item)));
+      card.append(top);
+      const details = node("div", "service-details");
+      const source = item && item.available === true ? serviceDetails(item) : [["Source", "No response"]];
+      source.forEach(function (entry) {
+        const row = node("div", "detail-row");
+        row.append(node("span", "", entry[0]), node("strong", "", valueOrDash(entry[1])));
+        details.append(row);
+      });
+      card.append(details);
+      return card;
+    }
+
+    function renderServices(target, services, keys) {
+      clear(target);
+      const rows = keys || Object.keys(SERVICE_NAMES);
+      if (!dashboardData) {
+        target.append(stateBlock(requestError ? "error" : "loading",
+          requestError ? "Service data unavailable" : "Loading service health",
+          requestError || "Waiting for the live dashboard API response."));
+        return;
+      }
+      const visible = rows.filter(function (key) { return Object.prototype.hasOwnProperty.call(SERVICE_NAMES, key); });
+      visible.forEach(function (key) {
+        target.append(renderServiceCard(SERVICE_NAMES[key], services && services[key]));
+      });
+    }
+
+    function capabilityValue(key) {
+      if (!dashboardData) return null;
+      if (!dashboardData.capabilities || dashboardData.capabilities[key] === undefined) return undefined;
+      return dashboardData.capabilities[key] === true;
+    }
+
+    function capabilityState(key, title, detail) {
+      const value = capabilityValue(key);
+      if (value === null) {
+        return stateBlock(requestError ? "error" : "loading",
+          requestError ? title + " unavailable" : "Loading capability",
+          requestError || "Waiting for the dashboard API.");
+      }
+      if (value) return stateBlock("live", title + " available", detail + " is exposed by the current read API.");
+      return stateBlock("unavailable", title + " not exposed",
+        detail + " is not included in the dashboard API response. No records are fabricated.");
+    }
+
+    function renderMetrics() {
+      const target = document.getElementById("overview-metrics");
+      clear(target);
+      const incidents = dashboardData && dashboardData.incidents;
+      const deployments = dashboardData && dashboardData.deployments;
+      const services = dashboardData && dashboardData.services || {};
+      const serviceItems = Object.values(services);
+      const responding = serviceItems.filter(function (item) { return item && item.available === true; }).length;
+      const healthy = serviceItems.filter(function (item) {
+        return item && item.available === true && item.data && item.data.status === "healthy";
+      }).length;
+      const unavailable = serviceItems.filter(function (item) { return !item || item.available !== true; }).length;
+      const metrics = [
+        ["Incident records", incidents && incidents.available ? incidents.data.length : "—",
+          incidents && incidents.available ? "Returned by the Observer API" : "Incident source unavailable"],
+        ["Healthy services", dashboardData ? healthy + " / " + serviceItems.length : "—",
+          dashboardData ? responding + " service endpoints responding" : "Waiting for live service data"],
+        ["Deployment records", deployments && deployments.available ? deployments.data.length : "—",
+          deployments && deployments.available ? "Returned by the Deployer API" : "Deployment source unavailable"],
+        ["Unavailable sources", dashboardData ? unavailable + (incidents && incidents.available ? 0 : 1) + (deployments && deployments.available ? 0 : 1) : "—",
+          dashboardData ? "Service and record sources without a response" : "Waiting for API response"]
+      ];
+      if (!dashboardData) {
+        target.append(stateBlock(requestError ? "error" : "loading",
+          requestError ? "Live summary unavailable" : "Loading live summary",
+          requestError || "Metrics appear after the dashboard API responds."));
+        return;
+      }
+      metrics.forEach(function (metric) {
+        const card = node("article", "metric");
+        card.append(node("div", "metric-label", metric[0]), node("div", "metric-value", metric[1]), node("div", "metric-note", metric[2]));
+        target.append(card);
+      });
+    }
+
+    function tableRow(values) {
+      const row = document.createElement("tr");
+      values.forEach(function (value, index) {
+        const cell = document.createElement("td");
+        if (value && typeof value === "object" && value.primary !== undefined) {
+          cell.append(node("span", "cell-primary", value.primary));
+          if (value.secondary) cell.append(node("span", "cell-secondary", value.secondary));
+        } else {
+          cell.textContent = valueOrDash(value);
+        }
+        row.append(cell);
+      });
+      return row;
+    }
+
+    function tableState(tbody, colspan, kind, title, detail) {
+      clear(tbody);
+      const row = document.createElement("tr");
+      const cell = node("td", "table-empty");
+      cell.colSpan = colspan;
+      cell.append(stateBlock(kind, title, detail));
+      row.append(cell);
+      tbody.append(row);
+    }
+
+    function incidentRows() {
+      return dashboardData && dashboardData.incidents && dashboardData.incidents.available === true &&
+        Array.isArray(dashboardData.incidents.data) ? dashboardData.incidents.data : null;
+    }
+
+    function deploymentRows() {
+      return dashboardData && dashboardData.deployments && dashboardData.deployments.available === true &&
+        Array.isArray(dashboardData.deployments.data) ? dashboardData.deployments.data : null;
+    }
+
+    function renderIncidentTables() {
+      const rows = incidentRows();
+      const overview = document.getElementById("overview-incidents");
+      const table = document.getElementById("incident-table");
+      const count = document.getElementById("incident-total");
+      const navCount = document.querySelector('[data-live-count="incidents"]');
+      if (!dashboardData) {
+        const kind = requestError ? "error" : "loading";
+        const title = requestError ? "Incident source unavailable" : "Loading incident records";
+        const detail = requestError || "Waiting for the Observer response.";
+        tableState(overview, 4, kind, title, detail);
+        tableState(table, 6, kind, title, detail);
+        count.textContent = "— records";
+        navCount.textContent = "—";
+        return;
+      }
+      if (!rows) {
+        tableState(overview, 4, "unavailable", "Incident source unavailable", "The dashboard API did not return incident records.");
+        tableState(table, 6, "unavailable", "Incident source unavailable", "The dashboard API did not return incident records.");
+        count.textContent = "Unavailable";
+        navCount.textContent = "—";
+        return;
+      }
+      count.textContent = rows.length + (rows.length === 1 ? " record" : " records");
+      navCount.textContent = String(rows.length);
+      if (!rows.length) {
+        tableState(overview, 4, "empty", "No incident records", "The live Observer API returned an empty incident list.");
+        tableState(table, 6, "empty", "No incident records", "The live Observer API returned an empty incident list.");
+        return;
+      }
+      clear(overview);
+      rows.slice(0, 5).forEach(function (item) {
+        overview.append(tableRow([
+          { primary: item.summary || item.id || "Incident", secondary: item.id || "" },
+          item.service_name || item.kind,
+          item.state || item.status,
+          displayDate(item.last_seen_at)
+        ]));
+      });
+      const search = document.getElementById("incident-search");
+      const filter = document.getElementById("incident-state");
+      const currentFilter = filter.value;
+      const states = Array.from(new Set(rows.map(function (item) { return item.state || item.status; }).filter(Boolean))).sort();
+      clear(filter);
+      const allOption = node("option", "", "All states");
+      allOption.value = "";
+      filter.append(allOption);
+      states.forEach(function (state) {
+        const option = node("option", "", state);
+        option.value = state;
+        filter.append(option);
+      });
+      filter.value = states.includes(currentFilter) ? currentFilter : "";
+      const query = search.value.trim().toLowerCase();
+      const shown = rows.filter(function (item) {
+        const state = item.state || item.status || "";
+        const inState = !filter.value || state === filter.value;
+        const haystack = [item.id, item.summary, item.service_name, item.kind, item.state, item.status].join(" ").toLowerCase();
+        return inState && (!query || haystack.includes(query));
+      });
+      if (!shown.length) {
+        tableState(table, 6, "empty", "No matching incidents", "Change the search or state filter to view live incident records.");
+        return;
+      }
+      clear(table);
+      shown.forEach(function (item) {
+        table.append(tableRow([
+          { primary: item.summary || "Incident", secondary: item.id || "" },
+          item.service_name,
+          item.kind,
+          item.state || item.status,
+          displayDate(item.first_seen_at),
+          displayDate(item.last_seen_at)
+        ]));
+      });
+    }
+
+    function renderDeploymentTables() {
+      const rows = deploymentRows();
+      const overview = document.getElementById("overview-deployments");
+      const table = document.getElementById("execution-table");
+      if (!dashboardData) {
+        const kind = requestError ? "error" : "loading";
+        const title = requestError ? "Deployment source unavailable" : "Loading deployment records";
+        const detail = requestError || "Waiting for the Deployer response.";
+        tableState(overview, 3, kind, title, detail);
+        tableState(table, 6, kind, title, detail);
+        return;
+      }
+      if (!rows) {
+        tableState(overview, 3, "unavailable", "Deployment source unavailable", "The dashboard API did not return deployment records.");
+        tableState(table, 6, "unavailable", "Deployment source unavailable", "The dashboard API did not return deployment records.");
+        return;
+      }
+      if (!rows.length) {
+        tableState(overview, 3, "empty", "No deployment records", "The live Deployer API returned an empty deployment ledger.");
+        tableState(table, 6, "empty", "No deployment records", "The live Deployer API returned an empty deployment ledger.");
+        return;
+      }
+      clear(overview);
+      rows.slice(0, 5).forEach(function (item) {
+        overview.append(tableRow([
+          { primary: item.service_name || "Deployment", secondary: item.change_type },
+          item.version,
+          item.status
+        ]));
+      });
+      const search = document.getElementById("execution-search").value.trim().toLowerCase();
+      const shown = rows.filter(function (item) {
+        const haystack = [item.deployment_id, item.service_name, item.version, item.change_type, item.status, item.previous_version].join(" ").toLowerCase();
+        return !search || haystack.includes(search);
+      });
+      if (!shown.length) {
+        tableState(table, 6, "empty", "No matching deployment records", "Change the search text to view live ledger entries.");
+        return;
+      }
+      clear(table);
+      shown.forEach(function (item) {
+        table.append(tableRow([
+          { primary: item.service_name || "Deployment", secondary: item.deployment_id || "" },
+          item.change_type,
+          item.previous_version,
+          item.version,
+          displayDate(item.created_at),
+          item.status
+        ]));
+      });
+    }
+
+    function renderCapabilities() {
+      const target = document.getElementById("overview-capabilities");
+      clear(target);
+      if (!dashboardData) {
+        target.append(stateBlock(requestError ? "error" : "loading",
+          requestError ? "Capability status unavailable" : "Loading capabilities",
+          requestError || "Waiting for dashboard API response."));
+        return;
+      }
+      CAPABILITIES.forEach(function (item) {
+        const row = node("div", "capability-row");
+        const copy = node("div", "");
+        copy.append(node("div", "capability-name", item[1]), node("div", "capability-note", item[2]));
+        const available = capabilityValue(item[0]);
+        row.append(copy, node("span", "pill" + (available === true ? "" : " pill-quiet"),
+          available === null || available === undefined ? "Unknown" : available ? "Available" : "Not exposed"));
+        target.append(row);
+      });
+    }
+
+    function renderEvidence() {
+      const list = document.getElementById("evidence-incidents");
+      const state = document.getElementById("evidence-state");
+      clear(list);
+      clear(state);
+      const rows = incidentRows();
+      if (!dashboardData) {
+        list.append(stateBlock(requestError ? "error" : "loading", "Incident references unavailable",
+          requestError || "Waiting for the live Observer response."));
+        state.append(stateBlock(requestError ? "error" : "loading", "Evidence API unavailable",
+          requestError || "Waiting for the dashboard API response."));
+        return;
+      }
+      if (!rows) {
+        list.append(stateBlock("unavailable", "Incident references unavailable", "The current dashboard API did not return incident records."));
+      } else if (!rows.length) {
+        list.append(stateBlock("empty", "No incident references", "The live Observer returned no incidents to associate with evidence."));
+      } else {
+        const fragment = document.createDocumentFragment();
+        rows.slice(0, 8).forEach(function (item) {
+          const row = node("div", "capability-row");
+          const copy = node("div", "");
+          copy.append(node("div", "capability-name", item.summary || "Incident"),
+            node("div", "capability-note", item.id || "No incident identifier returned"));
+          row.append(copy, node("span", "pill", "Live incident"));
+          fragment.append(row);
+        });
+        list.append(fragment);
+      }
+      state.append(stateBlock("unavailable", "Evidence records not exposed",
+        "The aggregate API includes incident references only; evidence bodies and digests are omitted."));
+    }
+
+    function renderServiceState(targetId, key, unavailableTitle, detail) {
+      const target = document.getElementById(targetId);
+      clear(target);
+      if (!dashboardData) {
+        target.append(stateBlock(requestError ? "error" : "loading",
+          requestError ? unavailableTitle : "Loading service status",
+          requestError || "Waiting for live service status."));
+        return;
+      }
+      const item = dashboardData.services && dashboardData.services[key];
+      if (!item || item.available !== true) {
+        target.append(stateBlock("unavailable", unavailableTitle, "The service health endpoint did not respond in the current aggregate."));
+        return;
+      }
+      const details = serviceDetails(item);
+      const group = node("div", "stack");
+      group.append(renderServiceCard(SERVICE_NAMES[key] || key, item));
+      if (detail) group.append(node("p", "page-note", detail));
+      if (!details.length) group.append(node("p", "page-note", "The endpoint returned no additional status fields."));
+      target.append(group);
+    }
+
+    function renderReadCapability(targetId, key, title, detail) {
+      const target = document.getElementById(targetId);
+      clear(target);
+      if (dashboardData && capabilityValue(key) === undefined) {
+        target.append(stateBlock("unavailable", title + " not reported",
+          "The dashboard API does not report this capability. No data is assumed."));
+        return;
+      }
+      target.append(capabilityState(key, title, detail));
+    }
+
+    function renderPolicy() {
+      const target = document.getElementById("policy-fields");
+      clear(target);
+      if (!dashboardData) {
+        target.append(stateBlock(requestError ? "error" : "loading",
+          requestError ? "Policy service unavailable" : "Loading policy status",
+          requestError || "Waiting for Safety Gate health response."));
+        return;
+      }
+      const item = dashboardData.services && dashboardData.services.safety_gate;
+      if (!item || item.available !== true) {
+        target.append(stateBlock("unavailable", "Safety Gate status unavailable", "The current aggregate did not receive a Safety Gate health response."));
+        return;
+      }
+      const data = item.data || {};
+      const values = [
+        ["Reported status", valueOrDash(data.status)],
+        ["Mode", valueOrDash(data.mode)],
+        ["Executor", valueOrDash(data.executor)],
+        ["OPA configured", data.opa_configured === undefined ? "Not reported" : data.opa_configured ? "Yes" : "No"],
+        ["HTTP response", valueOrDash(item.http_status)]
+      ];
+      values.forEach(function (entry) {
+        const cell = node("div", "info-cell");
+        cell.append(node("span", "info-label", entry[0]), node("span", "info-value", entry[1]));
+        target.append(cell);
+      });
+    }
+
+    function renderSimulation() {
+      const target = document.getElementById("simulation-live-state");
+      clear(target);
+      if (!dashboardData) {
+        target.append(stateBlock(requestError ? "error" : "loading",
+          requestError ? "Live data unavailable" : "Loading data boundary",
+          requestError || "Waiting for dashboard API response."));
+        return;
+      }
+      const incidentAvailable = dashboardData.incidents && dashboardData.incidents.available === true;
+      const deploymentAvailable = dashboardData.deployments && dashboardData.deployments.available === true;
+      const message = "Service status, " + (incidentAvailable ? "incident records" : "incident source unavailable") +
+        ", and " + (deploymentAvailable ? "deployment records" : "deployment source unavailable") +
+        " are the only event data returned by this API. No simulation feed is connected.";
+      target.append(stateBlock("live", "Live API data only", message));
+      target.append(node("p", "page-note", "The simulation status shown here is explanatory UI state, not a simulated incident or test result."));
+    }
+
+    function renderConnection() {
+      const banner = document.getElementById("connection-state");
+      const icon = document.getElementById("connection-symbol");
+      const title = document.getElementById("connection-title");
+      const description = document.getElementById("connection-description");
+      const pill = document.getElementById("connection-pill");
+      const time = document.getElementById("connection-time");
+      if (isLoading) {
+        banner.dataset.state = "loading";
+        icon.textContent = ICONS.loading;
+        title.textContent = "Refreshing live dashboard data";
+        description.textContent = "Reading the existing read-only aggregate API. No sample data is used.";
+        pill.textContent = "Loading";
+        return;
+      }
+      if (requestError) {
+        banner.dataset.state = "error";
+        icon.textContent = ICONS.error;
+        title.textContent = "Dashboard API unavailable";
+        description.textContent = requestError + ". Live values are cleared until a successful refresh.";
+        pill.textContent = "Unavailable";
+        time.textContent = "No live response";
+        return;
+      }
+      const services = dashboardData && dashboardData.services || {};
+      const reachableServices = Object.values(services).filter(function (item) { return item && item.available === true; }).length;
+      const incidentAvailable = dashboardData && dashboardData.incidents && dashboardData.incidents.available === true;
+      const deploymentAvailable = dashboardData && dashboardData.deployments && dashboardData.deployments.available === true;
+      const hasResponse = reachableServices > 0 || incidentAvailable || deploymentAvailable;
+      banner.dataset.state = hasResponse ? "live" : "unavailable";
+      icon.textContent = hasResponse ? ICONS.live : ICONS.unavailable;
+      title.textContent = hasResponse ? "Live API response received" : "Dashboard sources unavailable";
+      description.textContent = hasResponse
+        ? "Showing current service, incident and deployment responses. Missing sources are marked unavailable."
+        : "The aggregate responded, but none of its configured sources are available.";
+      pill.textContent = hasResponse ? "Live data" : "Unavailable";
+      time.textContent = loadTime ? "Updated " + loadTime.toLocaleTimeString() : "Live API";
+      updatedLabel.textContent = loadTime ? "Updated " + loadTime.toLocaleTimeString() : "Live API";
+    }
+
+    function renderAll() {
+      renderConnection();
+      renderMetrics();
+      renderServices(document.getElementById("overview-services"), dashboardData && dashboardData.services,
+        ["api", "agentshield", "worker", "deployer", "safety_gate", "executor"]);
+      renderServices(document.getElementById("services-grid"), dashboardData && dashboardData.services);
+      renderCapabilities();
+      renderIncidentTables();
+      renderDeploymentTables();
+      renderEvidence();
+      renderServiceState("diagnosis-service", "agentshield", "Observer unavailable",
+        "Observer health is not diagnosis data.");
+      renderReadCapability("diagnosis-state", "diagnosis_read", "Diagnosis records", "Diagnosis history");
+      renderServiceState("plans-gate", "safety_gate", "Safety Gate unavailable",
+        "Safety Gate health is not a remediation plan.");
+      renderReadCapability("plans-state", "remediation_plan_read", "Remediation plans", "Typed plan records");
+      renderReadCapability("approvals-state", "approval_queue_read", "Approval queue", "Pending approval records");
+      renderServiceState("approvals-gate", "safety_gate", "Safety Gate unavailable",
+        "Service health does not indicate pending approval state.");
+      renderServiceState("execution-service", "executor", "Executor unavailable",
+        "Health status is not an execution record.");
+      renderReadCapability("execution-history-state", "execution_history_read", "Executor history", "Action history");
+      renderServiceState("verification-service", "verifier", "Verifier unavailable",
+        "Service health is not an independent verification result.");
+      renderReadCapability("verification-state", "phase_6_4_verification", "Recovery verification", "Phase 6.4 verification outcomes");
+      renderServiceState("snapshot-service", "snapshots", "Snapshot Manager unavailable",
+        "Service health is not a snapshot catalogue.");
+      renderServiceState("recovery-service", "recovery", "Recovery Policy unavailable",
+        "Service health is not a recovery request or outcome.");
+      renderReadCapability("snapshot-catalog-state", "snapshot_catalog_read", "Snapshot catalogue", "Snapshot records");
+      renderReadCapability("recovery-history-state", "recovery_history_read", "Recovery history", "Recovery requests and audit records");
+      renderPolicy();
+      renderSimulation();
+      if (dashboardData) {
+        document.querySelectorAll('[data-live-count="incidents"]').forEach(function (element) {
+          const rows = incidentRows();
+          element.textContent = rows ? String(rows.length) : "—";
+        });
+      }
+    }
+
+    function navigate(pageId, updateHash) {
+      const target = pageSections.find(function (section) { return section.id === pageId; });
+      if (!target) return;
+      pageSections.forEach(function (section) { section.classList.toggle("is-active", section === target); });
+      navButtons.forEach(function (button) {
+        const active = button.dataset.page === pageId;
+        if (active) button.setAttribute("aria-current", "page");
+        else button.removeAttribute("aria-current");
+      });
+      const title = target.dataset.title || "AgentShield";
+      pageTitle.textContent = title;
+      if (updateHash !== false && window.location.hash !== "#" + pageId) {
+        window.history.replaceState(null, "", "#" + pageId);
+      }
+      closeMenu();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function openMenu() {
+      sidebar.classList.add("is-open");
+      backdrop.classList.add("is-visible");
+      menuToggle.setAttribute("aria-expanded", "true");
+      menuToggle.setAttribute("aria-label", "Close navigation");
+    }
+
+    function closeMenu() {
+      sidebar.classList.remove("is-open");
+      backdrop.classList.remove("is-visible");
+      menuToggle.setAttribute("aria-expanded", "false");
+      menuToggle.setAttribute("aria-label", "Open navigation");
+    }
+
+    async function loadDashboard() {
+      if (isLoading) return;
+      isLoading = true;
+      requestError = null;
+      renderConnection();
+      refreshButton.disabled = true;
+      try {
+        const response = await fetch(DASHBOARD_API, {
+          method: "GET",
+          headers: { "Accept": "application/json" },
+          credentials: "same-origin",
+          cache: "no-store"
+        });
+        if (!response.ok) throw new Error("Dashboard request failed (" + response.status + ")");
+        const data = await response.json();
+        if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Dashboard response was not an object");
+        dashboardData = data;
+        requestError = null;
+        loadTime = new Date();
+      } catch (error) {
+        dashboardData = null;
+        requestError = error && error.message ? error.message : "Dashboard request failed";
+        loadTime = null;
+      } finally {
+        isLoading = false;
+        refreshButton.disabled = false;
+        renderAll();
+      }
+    }
+
+    navButtons.forEach(function (button) {
+      button.addEventListener("click", function () { navigate(button.dataset.page); });
+    });
+    document.querySelectorAll("[data-go]").forEach(function (button) {
+      button.addEventListener("click", function () { navigate(button.dataset.go); });
+    });
+    document.getElementById("incident-search").addEventListener("input", renderIncidentTables);
+    document.getElementById("incident-state").addEventListener("change", renderIncidentTables);
+    document.getElementById("execution-search").addEventListener("input", renderDeploymentTables);
+    refreshButton.addEventListener("click", loadDashboard);
+    menuToggle.addEventListener("click", function () {
+      if (menuToggle.getAttribute("aria-expanded") === "true") closeMenu();
+      else openMenu();
+    });
+    backdrop.addEventListener("click", closeMenu);
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") closeMenu();
+    });
+    window.addEventListener("hashchange", function () {
+      navigate(window.location.hash.slice(1) || "overview", false);
+    });
+    navigate(window.location.hash.slice(1) || "overview", false);
+    loadDashboard();
+  </script>
+</body>
+</html>
+
+\n

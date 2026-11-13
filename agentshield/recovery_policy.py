@@ -1,6 +1,7 @@
-"""Phase 6.2 recovery eligibility and authorization policy only.
+"""Phase 6 recovery authorization, restoration delegation, and verification gate.
 
-This service does not restore, restart, or execute infrastructure actions.
+Infrastructure changes are delegated to the separately authorized Executor;
+this service has no Docker socket or general-purpose mutation interface.
 Snapshot and audit HMAC keys are read from a separate mounted secret file.
 """
 import hashlib
@@ -8,11 +9,13 @@ import hmac
 import json
 import os
 import uuid
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import psycopg
+import httpx
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from psycopg.rows import dict_row
@@ -25,6 +28,12 @@ OPERATOR_TOKENS = json.loads(os.getenv("RECOVERY_OPERATOR_TOKENS_JSON", "{}"))
 APPROVER_TOKENS = json.loads(os.getenv("RECOVERY_APPROVER_TOKENS_JSON", "{}"))
 MAX_SNAPSHOT_AGE_SECONDS = max(60, int(os.getenv("RECOVERY_MAX_SNAPSHOT_AGE_SECONDS", "86400")))
 MAX_ATTEMPTS_PER_INCIDENT = max(1, int(os.getenv("RECOVERY_MAX_ATTEMPTS_PER_INCIDENT", "3")))
+RECOVERY_EXECUTOR_ENABLED = os.getenv("RECOVERY_EXECUTOR_ENABLED", "false").lower() == "true"
+RECOVERY_EXECUTOR_URL = os.getenv("RECOVERY_EXECUTOR_URL", "http://agentshield-executor:8004").rstrip("/")
+RECOVERY_EXECUTOR_SHARED_SECRET = os.getenv("RECOVERY_EXECUTOR_SHARED_SECRET", "")
+RECOVERY_VERIFIER_URL = os.getenv("RECOVERY_VERIFIER_URL", "http://agentshield-independent-verifier:8005").rstrip("/")
+RECOVERY_VERIFIER_TOKEN = os.getenv("RECOVERY_VERIFIER_TOKEN", "")
+RECOVERY_VERIFIER_TIMEOUT_SECONDS = max(30, min(600, int(os.getenv("RECOVERY_VERIFIER_TIMEOUT_SECONDS", "360"))))
 AUDIT_LOCK_ID = 721462032
 
 
@@ -181,7 +190,9 @@ def validate_eligibility(c, request: RecoveryRequest):
         return "incident_not_eligible_for_recovery", snapshot
     source_action = c.execute("SELECT status,decision,action_type,parameters FROM agentshield_action_requests WHERE id=%s AND incident_id=%s FOR UPDATE",
                               (request.execution_id, request.incident_id)).fetchone()
-    if not source_action or source_action["status"] != "executed" or source_action["decision"] != "REQUIRE_APPROVAL" or source_action["action_type"] != "restart_service" or source_action["parameters"].get("target") != "api":
+    source_parameters = source_action["parameters"] if source_action else {}
+    source_targets_api = source_parameters.get("target", source_parameters.get("service")) == "api"
+    if not source_action or source_action["status"] != "executed" or source_action["decision"] != "REQUIRE_APPROVAL" or source_action["action_type"] not in {"restart_service", "rollback_deployment"} or not source_targets_api:
         return "source_execution_not_eligible", snapshot
     verification = c.execute("SELECT outcome FROM agentshield_verifications WHERE execution_id=%s AND incident_id=%s ORDER BY completed_at DESC LIMIT 1",
                              (request.execution_id, request.incident_id)).fetchone()
@@ -189,9 +200,9 @@ def validate_eligibility(c, request: RecoveryRequest):
         return "independent_verification_failure_required", snapshot
     if request.action is None:
         return "recovery_action_required", snapshot
-    if request.action.action_type != "restore_api_deployment" or request.action.target != "api":
+    if request.action.action_type != "rollback_deployment" or request.action.target != "api" or request.action.version not in {"v1", "v2", "v2-bad"}:
         return "unsupported_recovery_action", snapshot
-    snapshot_version = (snapshot["content"].get("configuration") or {}).get("version")
+    snapshot_version = (snapshot["content"].get("deployment") or {}).get("version")
     if not snapshot_version or request.action.version != snapshot_version:
         return "recovery_version_must_match_snapshot", snapshot
     return None, snapshot
@@ -289,11 +300,187 @@ def approve_recovery(request_id: uuid.UUID, approval: ApprovalRequest, actor: st
                              row["incident_id"], row["source_execution_id"], row["snapshot_id"], request_id)
             else:
                 append_audit(c, "recovery_authorized", actor, {"approval_note": approval.note,
-                             "status": "authorized_no_restoration_in_phase_6_2"}, row["incident_id"],
+                             "status": "authorized_for_phase_6_3"}, row["incident_id"],
                              row["source_execution_id"], row["snapshot_id"], request_id)
     if denial:
         raise HTTPException(409, denial)
     return result
+
+
+def execute_authorized_recovery(request_id: uuid.UUID, actor: str):
+    if not RECOVERY_EXECUTOR_ENABLED:
+        return {"status": "authorized", "execution_enabled": False, "incident_resolved": False}
+    if len(RECOVERY_EXECUTOR_SHARED_SECRET.encode()) < 32:
+        raise HTTPException(503, "Recovery Executor authorization is not configured")
+    with conn() as c:
+        row = c.execute("SELECT * FROM agentshield_recovery_requests WHERE id=%s FOR UPDATE", (request_id,)).fetchone()
+        if not row or row["status"] != "authorized":
+            raise HTTPException(409, "Recovery request is not authorized for execution")
+        snapshot = c.execute("SELECT * FROM agentshield_snapshots WHERE id=%s", (row["snapshot_id"],)).fetchone()
+        if not snapshot:
+            append_audit(c, "recovery_execution_rejected", actor, {"reason": "authorized_snapshot_missing"},
+                         row["incident_id"], row["source_execution_id"], row["snapshot_id"], request_id)
+            c.commit()
+            raise HTTPException(409, "Authorized deployment snapshot is unavailable")
+        valid, reason = verify_snapshot(snapshot)
+        if not valid:
+            append_audit(c, "recovery_execution_rejected", actor, {"reason": reason}, row["incident_id"],
+                         row["source_execution_id"], row["snapshot_id"], request_id)
+            c.commit()
+            raise HTTPException(409, "Snapshot failed execution-time integrity validation")
+        c.execute("UPDATE agentshield_recovery_requests SET status='executing' WHERE id=%s AND status='authorized'", (request_id,))
+        envelope = {"snapshot_id": str(snapshot["id"]), "incident_id": str(snapshot["incident_id"]),
+                    "execution_id": str(snapshot["execution_id"]), "target": snapshot["target"],
+                    "captured_at": snapshot["captured_at"].isoformat(), "content": snapshot["content"],
+                    "content_sha256": snapshot["content_sha256"],
+                    "integrity_hmac_sha256": snapshot["integrity_hmac_sha256"]}
+        now_value = now()
+        grant = {"action_id": str(request_id),
+                 "proposal_sha256": hashlib.sha256(canonical({"service": "api", "version": row["version"],
+                                                               "snapshot_id": str(row["snapshot_id"])}).encode()).hexdigest(),
+                 "action_type": "rollback_deployment", "parameters": {"service": "api", "version": row["version"]},
+                 "decision": "REQUIRE_APPROVAL", "action_status": "approved",
+                 "approval_expires_at": (now_value + timedelta(minutes=1)).isoformat(),
+                 "issued_at": now_value.isoformat(), "expires_at": (now_value + timedelta(seconds=55)).isoformat(),
+                 "nonce": secrets.token_hex(32), "snapshot_envelope": envelope}
+        signature = hmac.new(RECOVERY_EXECUTOR_SHARED_SECRET.encode(), canonical(grant).encode(), hashlib.sha256).hexdigest()
+        append_audit(c, "recovery_execution_started", actor, {"version": row["version"],
+                     "action_type": "rollback_deployment"}, row["incident_id"], row["source_execution_id"],
+                     row["snapshot_id"], request_id)
+    try:
+        response = httpx.post(RECOVERY_EXECUTOR_URL + "/execute", json=grant,
+            headers={"X-Gate-Signature": signature}, timeout=55, trust_env=False)
+        if response.status_code != 200:
+            try:
+                error_body = response.json()
+                failure = error_body.get("detail", {}) if isinstance(error_body, dict) else {}
+            except ValueError:
+                failure = {}
+            raise RuntimeError(json.dumps({"executor_rejected": True,
+                                           "compensation": failure.get("compensation"),
+                                           "error": failure.get("error", "executor_rejected")}))
+        result = response.json()
+        deployment_result = result.get("deployment", {})
+        expected_deployment = snapshot["content"].get("deployment", {})
+        if (result.get("executed") is not True or result.get("phase6_4_required") is not True
+                or result.get("action_id") != str(request_id) or result.get("target") != "api"
+                or deployment_result.get("version") != row["version"]
+                or deployment_result.get("image_digest") != expected_deployment.get("image_digest")
+                or deployment_result.get("config_revision") != expected_deployment.get("config_revision")
+                or deployment_result.get("resource_limits") != expected_deployment.get("resource_limits")):
+            raise RuntimeError("executor_result_invalid")
+    except Exception as exc:
+        compensation = None
+        error_type = type(exc).__name__
+        try:
+            failure_detail = json.loads(str(exc))
+            if failure_detail.get("executor_rejected"):
+                compensation = failure_detail.get("compensation")
+                error_type = failure_detail.get("error", error_type)
+        except (ValueError, TypeError):
+            pass
+        with conn() as c:
+            c.execute("UPDATE agentshield_recovery_requests SET status='execution_failed' WHERE id=%s AND status='executing'", (request_id,))
+            append_audit(c, "recovery_execution_failed", actor, {"error_type": error_type,
+                         "compensation": compensation},
+                         row["incident_id"], row["source_execution_id"], row["snapshot_id"], request_id)
+        return {"status": "execution_failed", "incident_resolved": False}
+    with conn() as c:
+        c.execute("UPDATE agentshield_recovery_requests SET status='verifying' WHERE id=%s AND status='executing'", (request_id,))
+        deployment = result.get("deployment", {})
+        append_audit(c, "recovery_execution_completed", actor,
+                     {"version": row["version"], "image_digest": deployment.get("image_digest"),
+                      "config_revision": deployment.get("config_revision"),
+                      "incumbent_retained": deployment.get("incumbent_retained") is True,
+                      "phase6_4_required": True, "executor_reported_success": True}, row["incident_id"], row["source_execution_id"],
+                     row["snapshot_id"], request_id)
+    return verify_restored_deployment(request_id, actor, row, snapshot, result)
+
+
+def preflight_independent_verifier():
+    """Fail before restoration if the independent verification service is unavailable."""
+    if len(RECOVERY_VERIFIER_TOKEN.encode()) < 32:
+        raise HTTPException(503, "Independent recovery verifier authorization is not configured")
+    try:
+        response = httpx.get(RECOVERY_VERIFIER_URL + "/health", timeout=3, trust_env=False)
+        status = response.status_code
+        identity = response.json() if status == 200 else {}
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(503, "Independent recovery verifier is unavailable")
+    if (status != 200 or not isinstance(identity, dict)
+            or identity.get("service") != "agentshield-independent-verifier"
+            or identity.get("status") != "healthy"
+            or identity.get("docker_access") != "none"
+            or identity.get("recovery_verification_available") is not True):
+        raise HTTPException(503, "Independent recovery verifier preflight failed")
+
+
+def verify_restored_deployment(request_id: uuid.UUID, actor: str, recovery_row: dict,
+                               snapshot: dict, executor_result: dict):
+    """Ask the isolated verifier to prove recovery; executor output is not proof."""
+    expected = snapshot.get("content", {}).get("deployment", {})
+    payload = {
+        "incident_id": str(recovery_row["incident_id"]),
+        "recovery_request_id": str(request_id),
+        "target": "api",
+        "expected_version": recovery_row["version"],
+        "expected_image_digest": expected.get("image_digest"),
+        "expected_config_revision": expected.get("config_revision"),
+        "expected_resource_limits": expected.get("resource_limits"),
+    }
+    outcome, reason, verification = "INCONCLUSIVE", "verifier_unavailable_or_invalid_response", {}
+    try:
+        response = httpx.post(RECOVERY_VERIFIER_URL + "/verify-recovery", json=payload,
+                              headers={"X-Verifier-Token": RECOVERY_VERIFIER_TOKEN},
+                              timeout=RECOVERY_VERIFIER_TIMEOUT_SECONDS, trust_env=False)
+        if response.status_code == 200:
+            verification = response.json()
+            if not isinstance(verification, dict):
+                verification = {}
+                outcome, reason = "INCONCLUSIVE", "verifier_response_not_object"
+            elif (str(verification.get("incident_id")) != str(recovery_row["incident_id"])
+                    or str(verification.get("verification_id")) != str(request_id)):
+                outcome, reason = "INCONCLUSIVE", "verifier_response_identity_mismatch"
+            elif not _has_verification_evidence(verification):
+                outcome, reason = "INCONCLUSIVE", "verifier_response_evidence_missing_or_invalid"
+            elif verification.get("outcome") == "PASSED" and verification.get("incident_state") == "RESOLVED":
+                outcome, reason = "PASSED", str(verification.get("reason", "all_recovery_checks_passed"))
+            elif verification.get("outcome") == "FAILED" and verification.get("incident_state") == "ESCALATED":
+                outcome, reason = "FAILED", str(verification.get("reason", "recovery_verification_failed"))
+            elif verification.get("outcome") == "INCONCLUSIVE" and verification.get("incident_state") == "ESCALATED":
+                outcome, reason = "INCONCLUSIVE", str(verification.get("reason", "recovery_verification_inconclusive"))
+            else:
+                outcome, reason = "INCONCLUSIVE", "verifier_response_outcome_state_mismatch"
+    except (httpx.HTTPError, ValueError, TypeError):
+        pass
+
+    status = {"PASSED": "verified", "FAILED": "verification_failed",
+              "INCONCLUSIVE": "verification_inconclusive"}[outcome]
+    with conn() as c:
+        c.execute("UPDATE agentshield_recovery_requests SET status=%s WHERE id=%s AND status='verifying'",
+                  (status, request_id))
+        append_audit(c, "recovery_independent_verification_" + outcome.lower(), actor,
+                     {"outcome": outcome, "reason": reason,
+                      "executor_reported_success": executor_result.get("executed") is True,
+                      "verification_id": str(verification.get("verification_id", request_id)),
+                      "evidence_id": str(verification.get("evidence_id")) if verification.get("evidence_id") else None,
+                      "evidence_sha256": verification.get("evidence_sha256")},
+                     recovery_row["incident_id"], recovery_row["source_execution_id"],
+                     recovery_row["snapshot_id"], request_id)
+    return {"status": status, "incident_resolved": outcome == "PASSED",
+            "phase6_4_required": False, "verification_outcome": outcome,
+            "verification_reason": reason}
+
+
+def _has_verification_evidence(result: dict) -> bool:
+    try:
+        uuid.UUID(str(result["evidence_id"]))
+        evidence_hash = result["evidence_sha256"]
+        return (isinstance(evidence_hash, str) and len(evidence_hash) == 64
+                and all(char in "0123456789abcdef" for char in evidence_hash)
+                and isinstance(result.get("samples"), int) and result["samples"] >= 2)
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def audit_chain_status():
@@ -318,7 +505,9 @@ def audit_auth_failure(request: RecoveryRequest, kind: str):
 
 @app.get("/health")
 def health():
-    return {"service": "agentshield-recovery-policy", "status": "healthy", "restoration_enabled": False}
+    enabled = RECOVERY_EXECUTOR_ENABLED and len(RECOVERY_EXECUTOR_SHARED_SECRET.encode()) >= 32
+    return {"service": "agentshield-recovery-policy", "status": "healthy",
+            "restoration_enabled": enabled, "production_execution_default": False}
 
 
 @app.post("/recovery/requests", status_code=201)
@@ -344,7 +533,14 @@ def approve(request_id: uuid.UUID, approval: ApprovalRequest,
                           "request_id": str(request_id)}, row["incident_id"] if row else None,
                          row["source_execution_id"] if row else None, row["snapshot_id"] if row else None, request_id)
         raise
-    return approve_recovery(request_id, approval, actor)
+    # Preflight before the approval state is committed. If verification is
+    # unavailable, the request remains pending and no restoration can start.
+    if RECOVERY_EXECUTOR_ENABLED:
+        preflight_independent_verifier()
+    approved = approve_recovery(request_id, approval, actor)
+    if approved.get("status") == "authorized":
+        return {**approved, "execution": execute_authorized_recovery(request_id, actor)}
+    return approved
 
 
 @app.get("/recovery/requests/{request_id}")

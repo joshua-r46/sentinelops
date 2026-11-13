@@ -61,22 +61,27 @@ class Phase4IntegrationTests(unittest.TestCase):
     @classmethod
     def wait_for_services(cls):
         deadline = time.monotonic() + 45
+        last_status = {"gate": None, "executor": None, "proxy": None, "api": None}
         while time.monotonic() < deadline:
             try:
                 gate = cls.client.get(cls.gate_url + "/health")
+                last_status["gate"] = gate.status_code
                 executor = cls.client.get(cls.executor_url + "/health")
+                last_status["executor"] = executor.status_code
                 proxy = cls.client.get(cls.proxy_url + "/containers/" + cls.target + "/json")
+                last_status["proxy"] = proxy.status_code
                 if gate.status_code == 200 and executor.status_code == 200:
                     if cls.mode == "success":
                         api = cls.client.get(cls.api_url + "/")
+                        last_status["api"] = api.status_code
                         if api.status_code == 200 and proxy.status_code == 200:
                             return
                     elif cls.mode == "docker_failure" and proxy.status_code == 404:
                         return
-            except httpx.HTTPError:
-                pass
+            except httpx.HTTPError as exc:
+                last_status["error"] = f"{type(exc).__name__}: {exc}"
             time.sleep(0.5)
-        raise RuntimeError("Disposable Phase 4 services did not become ready")
+        raise RuntimeError(f"Disposable Phase 4 services did not become ready: {last_status}")
 
     def new_approved_action(self):
         incident_id = uuid.uuid4()

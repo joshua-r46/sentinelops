@@ -26,6 +26,10 @@ venv/
 *.sqlite
 *.sqlite3
 
+# Phase 6.3 catalog is generated from local immutable Docker image IDs.
+deployment/catalog.json
+deployment/.image-ids.*
+
 # OS
 .DS_Store
 Thumbs.db

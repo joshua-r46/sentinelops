@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/tests/lib/isolated_docker.sh"
+isolated_docker_init
 
 RUN_ID="$(date -u +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
 LABEL_KEY="agentshield.phase4.integration.run"
@@ -17,10 +19,10 @@ EXECUTOR="phase4-it-executor-$RUN_ID"
 PROXY="phase4-it-proxy-$RUN_ID"
 RUNNER_SUCCESS="phase4-it-runner-success-$RUN_ID"
 RUNNER_FAILURE="phase4-it-runner-failure-$RUN_ID"
-API_IMAGE="shopstack-api:phase4-integration"
-GATE_IMAGE="agentshield:phase4-integration-gate"
-EXECUTOR_IMAGE="agentshield:phase4-integration-executor"
-PROXY_IMAGE="agentshield:phase4-integration-proxy"
+API_IMAGE="shopstack-api:phase4-integration-$RUN_ID"
+GATE_IMAGE="agentshield:phase4-integration-gate-$RUN_ID"
+EXECUTOR_IMAGE="agentshield:phase4-integration-executor-$RUN_ID"
+PROXY_IMAGE="agentshield:phase4-integration-proxy-$RUN_ID"
 PRIMARY_CREATED=0
 SOCKET_CREATED=0
 PG_PASSWORD="$(openssl rand -hex 24)"
@@ -41,6 +43,8 @@ cleanup() {
   if [[ "$PRIMARY_CREATED" == 1 ]]; then
     docker network rm "$PRIMARY_NETWORK" >/dev/null 2>&1 || true
   fi
+  image_ids="$(docker image ls -q --filter "label=$LABEL_KEY=$LABEL_VALUE" | sort -u)"
+  if [[ -n "$image_ids" ]]; then docker image rm $image_ids >/dev/null 2>&1 || true; fi
 }
 trap cleanup EXIT
 
@@ -51,10 +55,10 @@ for name in "$PRIMARY_NETWORK" "$SOCKET_NETWORK" "$POSTGRES" "$REDIS" "$API" "$G
   fi
 done
 
-docker build -t "$API_IMAGE" -f api/Dockerfile api
-docker build -t "$GATE_IMAGE" -f phase3policy/Dockerfile phase3policy
-docker build -t "$EXECUTOR_IMAGE" -f executor/Dockerfile executor
-docker build -t "$PROXY_IMAGE" -f executor/Dockerfile.socket-proxy executor
+docker build --label "$LABEL_KEY=$LABEL_VALUE" -t "$API_IMAGE" -f api/Dockerfile api
+docker build --label "$LABEL_KEY=$LABEL_VALUE" -t "$GATE_IMAGE" -f phase3policy/Dockerfile phase3policy
+docker build --label "$LABEL_KEY=$LABEL_VALUE" -t "$EXECUTOR_IMAGE" -f executor/Dockerfile executor
+docker build --label "$LABEL_KEY=$LABEL_VALUE" -t "$PROXY_IMAGE" -f executor/Dockerfile.socket-proxy executor
 
 docker network create --label "$LABEL_KEY=$LABEL_VALUE" "$PRIMARY_NETWORK" >/dev/null
 PRIMARY_CREATED=1
@@ -107,18 +111,17 @@ docker run -d --rm --name "$EXECUTOR" --label "$LABEL_KEY=$LABEL_VALUE" \
   "$EXECUTOR_IMAGE" >/dev/null
 docker network connect "$SOCKET_NETWORK" "$EXECUTOR"
 
-DOCKER_GID="$(stat -c %g /var/run/docker.sock)"
 docker run -d --rm --name "$PROXY" --label "$LABEL_KEY=$LABEL_VALUE" \
-  --network "$SOCKET_NETWORK" --user 65532:65532 --group-add "$DOCKER_GID" \
+  --network "$SOCKET_NETWORK" --user 65532:65532 \
   --cap-drop ALL --security-opt no-new-privileges --read-only \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -e DOCKER_HOST="$ISOLATED_DOCKER_HOST" \
   -e ALLOWED_CONTAINER_NAME="$API" "$PROXY_IMAGE" >/dev/null
 
 wait_for_http() {
   local url="$1"
   local ready=0
   for _ in $(seq 1 60); do
-    if docker run --rm --network "$PRIMARY_NETWORK" "$GATE_IMAGE" \
+    if docker run --rm --label "$LABEL_KEY=$LABEL_VALUE" --network "$PRIMARY_NETWORK" "$GATE_IMAGE" \
         python -c "import urllib.request; urllib.request.urlopen('$url', timeout=2)" >/dev/null 2>&1; then
       ready=1
       break
@@ -152,7 +155,10 @@ run_integration_pass() {
     --mount "type=bind,source=$ROOT/tests/test_phase4_integration.py,target=/work/test_phase4_integration.py,readonly" \
     "$GATE_IMAGE" python -m unittest discover -v -s /work -p test_phase4_integration.py >/dev/null
   docker network connect "$SOCKET_NETWORK" "$runner"
-  docker start -a "$runner"
+  if ! docker start -a "$runner"; then
+    for service in "$API" "$GATE" "$EXECUTOR" "$PROXY"; do docker logs "$service" >&2 || true; done
+    return 1
+  fi
 }
 
 run_integration_pass success "$RUNNER_SUCCESS"

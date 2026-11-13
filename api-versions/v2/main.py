@@ -95,7 +95,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ShopStack API",
     description="Target application monitored by AgentShield",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -147,8 +147,8 @@ async def root():
     return {
         "application": "ShopStack",
         "service": "api",
-        "version": "1.0.0",
-        "message": "ShopStack API is running",
+        "version": "2.0.0",
+        "message": "ShopStack API v2 is running",
     }
 
 
@@ -180,16 +180,6 @@ def health():
 
 @app.post("/orders", status_code=201)
 def create_order(order: OrderRequest):
-    logger.error({
-        "event": "deployment_regression",
-        "version": "2.0.0",
-        "reason": "Simulated faulty deployment",
-    })
-
-    raise HTTPException(
-        status_code=500,
-        detail="Internal server error: simulated deployment regression",
-    )
     order_id = uuid.uuid4()
 
     try:
@@ -229,6 +219,7 @@ def create_order(order: OrderRequest):
             status_code=503,
             detail="Unable to accept order",
         )
+
 
 @app.get("/orders/{order_id}")
 def get_order(order_id: uuid.UUID):

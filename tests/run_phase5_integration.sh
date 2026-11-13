@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/tests/lib/isolated_docker.sh"
+isolated_docker_init
 RUN_ID="$(date -u +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
 LABEL_KEY="agentshield.phase5.integration.run"
 NETWORK="phase5-it-$RUN_ID"
@@ -16,9 +18,9 @@ LABEL_VALUE="$RUN_ID"
 PG_PASSWORD="$(openssl rand -hex 24)"
 TOKEN="$(openssl rand -hex 32)"
 DATABASE_URL="postgresql://shopstack_it:$PG_PASSWORD@$POSTGRES:5432/shopstack_it"
-API_IMAGE="shopstack-api:phase5-it"
-WORKER_IMAGE="shopstack-worker:phase5-it"
-VERIFIER_IMAGE="agentshield:phase5-it"
+API_IMAGE="shopstack-api:phase5-it-$RUN_ID"
+WORKER_IMAGE="shopstack-worker:phase5-it-$RUN_ID"
+VERIFIER_IMAGE="agentshield:phase5-it-$RUN_ID"
 PRIMARY_CREATED=0
 
 cleanup() {
@@ -35,9 +37,9 @@ for name in "$NETWORK" "$POSTGRES" "$REDIS" "$API" "$WORKER" "$VERIFIER" "$RUNNE
   fi
 done
 
-docker build -t "$API_IMAGE" -f api/Dockerfile api
-docker build -t "$WORKER_IMAGE" -f worker/Dockerfile worker
-docker build -t "$VERIFIER_IMAGE" -f agentshield/Dockerfile agentshield
+docker build --label "$LABEL_KEY=$LABEL_VALUE" -t "$API_IMAGE" -f api/Dockerfile api
+docker build --label "$LABEL_KEY=$LABEL_VALUE" -t "$WORKER_IMAGE" -f worker/Dockerfile worker
+docker build --label "$LABEL_KEY=$LABEL_VALUE" -t "$VERIFIER_IMAGE" -f agentshield/Dockerfile agentshield
 docker network create --label "$LABEL_KEY=$LABEL_VALUE" "$NETWORK" >/dev/null
 PRIMARY_CREATED=1
 docker run -d --rm --name "$POSTGRES" --label "$LABEL_KEY=$LABEL_VALUE" --network "$NETWORK" \

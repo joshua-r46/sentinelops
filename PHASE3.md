@@ -6,17 +6,20 @@ The independent agentshield-policy service runs on port 8003. It reads saved
 Phase 2 incident evidence from PostgreSQL and writes only new Phase 3 action
 requests, approvals, and append-only audit events. It has no HTTP client,
 Docker socket/client, shell runner, cloud SDK, deployer URL, API URL, Redis URL,
-or control-plane credentials. The monitor and optional LLM remain diagnosis-only
-and never call it.
+or control-plane credentials. The monitor and optional LLM remain diagnosis-only.
+Gemini is accessed only through `agentshield/llm_gateway.py`; model
+recommendations do not call or authorize the Safety Gate.
 
 A proposal carries an incident UUID and SHA-256 of the exact saved evidence.
 The policy service recomputes the hash, rejecting stale, invented, or
 cross-incident evidence references. Evaluation is deterministic and
-deny-by-default. operator_check is a non-mutating ALLOW. restart_service and
-request_deployment_review are typed simulation-only actions that require human
-approval. Unknown actions, shell/exec, delete, volume removal, database drops,
-scale-to-zero, Docker API, rollback, arbitrary URLs, unknown targets, and
-forbidden parameters are BLOCK.
+deny-by-default. Read-only `read_logs`, `read_metrics`, and `read_config`
+actions are R0. Typed rollback/config restoration are R1 and require the
+Executor's snapshot checks when execution is enabled. A bounded stateless
+service restart is R1; API and PostgreSQL restarts and bounded resource changes
+are R2 and require human approval. Unknown actions, shell/exec, delete, volume
+removal, database drops, scale-to-zero, Docker API, arbitrary URLs, unknown
+targets, and forbidden parameters are BLOCK.
 
 Risk and blast radius are returned and stored with every decision. Consequential
 actions are pending approval; API restarts are classified R2. Approval/rejection carries actor and note. Dry-run is always non-mutating and audited. The Phase 4 increment adds a
@@ -28,8 +31,45 @@ Approval remains bound to the exact proposal and expires.
 
 - GET /health
 - POST /actions; GET /actions/{id}
+- GET /approvals/pending (requires the Telegram queue service token)
 - POST /actions/{id}/approve, /reject, /dry-run, /execute
 - GET /actions/{id}/audit
+
+## Gemini diagnosis and Telegram operator integration
+
+The provider-neutral LLM Gateway supports Gemini through the official
+`google-genai` SDK. Configure `LLM_ENABLED=true`, `LLM_PROVIDER=gemini`,
+`GEMINI_API_KEY`, `GEMINI_MODEL`, and a 32-byte-or-longer `LLM_GATEWAY_TOKEN`.
+Also set a separate 32-byte-or-longer `LLM_DIAGNOSIS_TOKEN`; callers must
+authenticate before triggering a cloud request.
+The legacy OpenAI-compatible REST provider remains available with
+`LLM_PROVIDER=openai`, `LLM_API_KEY`, and `LLM_MODEL`. The gateway redacts
+credential fields, connection endpoints, infrastructure IPs, and credential
+patterns before sending evidence to either cloud provider. It validates
+confidence, uncertainty, evidence UUIDs, and allowlisted typed recommendations.
+The Diagnosis Engine persists these as diagnosis metadata only; operators still
+submit any recommendation to the independent Safety Gate for evaluation.
+
+Telegram supports private-chat `/help`, `/status`, `/incident <id>`,
+`/start`, `/incidents`, `/approvals`, `/approve <id>`, and `/deny <id>`
+commands. `/incidents` is a bounded read-only list; `/incident <id>` returns
+one incident. Set
+`TELEGRAM_ALLOWED_USER_IDS` to positive Telegram user IDs and enable polling
+only when intended. `TELEGRAM_APPROVER_TOKEN` must match an entry in the Safety
+Gate's `APPROVER_TOKENS_JSON`. The queue token is the internal
+`TELEGRAM_SERVICE_TOKEN`. Telegram persists update offsets and replay/audit
+records in its dedicated `telegram_state` volume. The Safety Gate owns approval
+expiry, atomic decisions, duplicate rejection, and its existing action audit;
+Telegram records command outcomes locally as well. No shell, Docker, or direct
+Executor command is exposed.
+
+The LLM Gateway records provider outcome and elapsed milliseconds in its
+service log. It omits request/response bodies, credential values, and provider
+error messages.
+
+Unit tests mock Gemini SDK responses, internal APIs, and Telegram Bot API
+responses. A real cloud or Telegram smoke test requires local credentials and
+is reported separately from those tests.
 
 ## Tests and validation
 

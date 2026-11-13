@@ -9,6 +9,7 @@ import threading
 import time
 import unittest
 import uuid
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
@@ -74,7 +75,10 @@ class ExecutorFoundationTests(unittest.TestCase):
 
     @staticmethod
     def sign(grant):
-        body = executor_module.canonical(grant.model_dump(mode="json"))
+        grant_data = grant.model_dump(mode="json")
+        if grant.snapshot_envelope is None:
+            grant_data.pop("snapshot_envelope", None)
+        body = executor_module.canonical(grant_data)
         return hmac.new(executor_module.SECRET.encode(), body, hashlib.sha256).hexdigest()
 
     def test_signed_restart_records_allowlisted_pre_action_snapshot(self):
@@ -156,7 +160,7 @@ class ExecutorFoundationTests(unittest.TestCase):
         self.assertEqual(502, failure.exception.status_code)
         self.assertEqual("failed", failure.exception.detail["status"])
         import sqlite3
-        with sqlite3.connect(self.executor.db_path) as db:
+        with closing(sqlite3.connect(self.executor.db_path)) as db:
             status = db.execute("SELECT status FROM executions WHERE action_id=?", (str(self.grant.action_id),)).fetchone()[0]
         self.assertEqual("failed", status)
         with self.assertRaises(executor_module.HTTPException) as replay:

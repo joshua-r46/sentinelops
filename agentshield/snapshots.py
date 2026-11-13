@@ -108,14 +108,23 @@ async def read_snapshot_content():
         api_response = await client.get(API_URL + "/")
         api_response.raise_for_status()
         api = api_response.json()
+        deployment_response = await client.get(API_URL + "/__deployment")
+        deployment_response.raise_for_status()
+        deployment = deployment_response.json()
         health_response = await client.get(API_URL + "/health")
         health_response.raise_for_status()
         health = health_response.json()
         deploy_response = await client.get(DEPLOYER_URL + "/deployments")
         deploy_response.raise_for_status()
         deployments = deploy_response.json()
-    if not isinstance(api, dict) or not isinstance(health, dict) or not isinstance(deployments, list):
+    if not isinstance(api, dict) or not isinstance(health, dict) or not isinstance(deployments, list) or not isinstance(deployment, dict):
         raise HTTPException(502, "A supported ShopStack endpoint returned an invalid snapshot payload")
+    if (deployment.get("version") not in {"v1", "v2", "v2-bad"}
+            or not isinstance(deployment.get("image_digest"), str)
+            or not deployment["image_digest"].startswith("sha256:")
+            or not isinstance(deployment.get("config_revision"), str)
+            or not isinstance(deployment.get("resource_limits"), dict)):
+        raise HTTPException(502, "Deployment identity returned by the API router is invalid")
     projected = []
     for item in deployments[:MAX_DEPLOYMENTS]:
         if not isinstance(item, dict):
@@ -123,6 +132,7 @@ async def read_snapshot_content():
         projected.append({key: item.get(key) for key in SAFE_DEPLOYMENT_FIELDS if key in item})
     return {
         "configuration": {key: api[key] for key in ("application", "service", "version") if key in api},
+        "deployment": {key: deployment[key] for key in ("version", "image_digest", "config_revision", "resource_limits")},
         "runtime": {"status": health.get("status"), "dependencies": health.get("dependencies", {})},
         "deployment_state": {"entries": projected, "captured_count": len(projected),
                              "total_count": len(deployments), "truncated": len(deployments) > MAX_DEPLOYMENTS},
@@ -144,8 +154,10 @@ async def create_snapshot(request: SnapshotRequest):
             raise HTTPException(409, "Snapshots are only captured before execution for a gated incident")
         action = c.execute("SELECT status,decision,action_type,parameters FROM agentshield_action_requests WHERE id=%s AND incident_id=%s FOR UPDATE",
                            (request.execution_id, request.incident_id)).fetchone()
-        if not action or action["status"] != "approved" or action["decision"] != "REQUIRE_APPROVAL" or action["action_type"] != "restart_service" or action["parameters"].get("target") != "api":
-            raise HTTPException(409, "Snapshot must bind to an approved, allowlisted API restart action")
+        parameters = action["parameters"] if action else {}
+        is_api_action = parameters.get("target", parameters.get("service")) == "api"
+        if not action or action["status"] != "approved" or action["decision"] != "REQUIRE_APPROVAL" or action["action_type"] not in {"restart_service", "rollback_deployment"} or not is_api_action:
+            raise HTTPException(409, "Snapshot must bind to an approved, allowlisted API action")
         try:
             c.execute("INSERT INTO agentshield_snapshots (id,incident_id,execution_id,target,captured_at,content,content_sha256,integrity_hmac_sha256) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                       (snapshot_id, request.incident_id, request.execution_id, request.target, captured,

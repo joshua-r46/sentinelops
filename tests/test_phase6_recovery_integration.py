@@ -18,7 +18,7 @@ SNAPSHOT = os.environ["SNAPSHOT_URL"]
 DB = os.environ["DATABASE_URL"]
 OPERATOR_TOKEN = os.environ["RECOVERY_OPERATOR_TOKEN"]
 APPROVER_TOKEN = os.environ["RECOVERY_APPROVER_TOKEN"]
-VERSION = "1.0.0"
+VERSION = "v1"
 
 
 class DisposableRecoveryPolicyIntegration(unittest.TestCase):
@@ -56,7 +56,7 @@ class DisposableRecoveryPolicyIntegration(unittest.TestCase):
         body = {"request_id": str(request_id or uuid.uuid4()), "incident_id": str(incident_id),
                 "execution_id": str(execution_id), "snapshot_id": str(snapshot_id)}
         if action:
-            body["action"] = {"action_type": "restore_api_deployment", "target": "api", "version": VERSION}
+            body["action"] = {"action_type": "rollback_deployment", "target": "api", "version": VERSION}
         return body
 
     def submit(self, body, token=OPERATOR_TOKEN):

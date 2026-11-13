@@ -2,7 +2,8 @@ import importlib.util
 import pathlib
 import unittest
 
-SPEC = importlib.util.spec_from_file_location("observer", pathlib.Path("/observer/main.py"))
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location("observer", ROOT / "agentshield" / "main.py")
 observer = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(observer)
 

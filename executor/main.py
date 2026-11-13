@@ -23,6 +23,9 @@ DOCKER_PROXY_URL = os.getenv("DOCKER_PROXY_URL", "http://docker-socket-proxy:237
 MAX_GRANT_SECONDS = 60
 CLOCK_SKEW_SECONDS = 15
 DOCKER_TARGET_CONTAINER = os.getenv("DOCKER_TARGET_CONTAINER", "shopstack-api")
+DOCKER_PROXY_TOKEN = os.getenv("DOCKER_PROXY_TOKEN", "")
+SNAPSHOT_INTEGRITY_KEY_FILE = os.getenv("SNAPSHOT_INTEGRITY_KEY_FILE", "/run/secrets/snapshot_integrity_key")
+DEPLOYMENT_CATALOG_FILE = os.getenv("DEPLOYMENT_CATALOG_FILE", "/etc/agentshield/deployment-catalog.json")
 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", DOCKER_TARGET_CONTAINER):
     raise RuntimeError("DOCKER_TARGET_CONTAINER must be a single safe container name")
 
@@ -47,6 +50,7 @@ class Grant(BaseModel):
     issued_at: str
     expires_at: str
     nonce: str = Field(min_length=24, max_length=128)
+    snapshot_envelope: dict[str, Any] | None = None
 
 
 class DockerProxy:
@@ -72,6 +76,32 @@ class DockerProxy:
         response = self.client.post(f"{self.base_url}/containers/{self.container_name}/restart")
         if response.status_code != 204:
             raise RuntimeError("Approved service restart was not accepted")
+
+    def restore_deployment(self, version: str) -> dict[str, Any]:
+        if version not in {"v1", "v2", "v2-bad"}:
+            raise RuntimeError("Deployment version is not allowlisted")
+        if len(DOCKER_PROXY_TOKEN.encode()) < 32:
+            raise RuntimeError("Restricted Docker proxy authorization is not configured")
+        response = self.client.post(f"{self.base_url}/deployment/restore", json={"version": version},
+                                    headers={"X-Executor-Token": DOCKER_PROXY_TOKEN}, timeout=45)
+        if response.status_code != 200:
+            try:
+                error = response.json()
+            except ValueError:
+                error = {}
+            raise DeploymentProxyError(error.get("error", "deployment_failed"),
+                                       error.get("compensation") if error.get("compensation") in {"succeeded", "uncertain"} else None)
+        data = response.json()
+        if data.get("status") != "candidate_active" or data.get("incumbent_retained") is not True:
+            raise RuntimeError("Restricted proxy returned an invalid restoration result")
+        return data
+
+
+class DeploymentProxyError(RuntimeError):
+    def __init__(self, code: str, compensation: str | None = None):
+        super().__init__(code)
+        self.code = code
+        self.compensation = compensation
 
 
 class Executor:
@@ -103,7 +133,10 @@ class Executor:
     def _validate(self, grant: Grant, signature: str):
         if not SECRET or len(SECRET.encode()) < 32:
             raise HTTPException(503, "Executor authorization is not configured")
-        expected = hmac.new(SECRET.encode(), canonical(grant.model_dump(mode="json")), hashlib.sha256).hexdigest()
+        grant_data = grant.model_dump(mode="json")
+        if grant.snapshot_envelope is None:
+            grant_data.pop("snapshot_envelope", None)
+        expected = hmac.new(SECRET.encode(), canonical(grant_data), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, signature):
             raise HTTPException(401, "Safety Gate authorization signature is invalid")
         current = self.clock()
@@ -122,8 +155,62 @@ class Executor:
                 raise HTTPException(403, "Action is not in an executable Gate state")
         else:
             raise HTTPException(403, "Blocked actions cannot be executed")
-        if grant.action_type != "restart_service" or grant.parameters != {"target": "api"}:
-            raise HTTPException(422, "Executor supports only the typed api restart action")
+        if grant.action_type == "restart_service":
+            if grant.parameters != {"target": "api"} or grant.snapshot_envelope is not None:
+                raise HTTPException(422, "Executor supports only the typed api restart action")
+        elif grant.action_type == "rollback_deployment":
+            if set(grant.parameters) != {"service", "version"} or grant.parameters.get("service") != "api" or grant.parameters.get("version") not in {"v1", "v2", "v2-bad"}:
+                raise HTTPException(422, "Executor supports only rollback_deployment(api, allowlisted_version)")
+            self._validate_snapshot_envelope(grant)
+        else:
+            raise HTTPException(422, "Executor action type is not allowlisted")
+
+    @staticmethod
+    def _validate_snapshot_envelope(grant: Grant):
+        envelope = grant.snapshot_envelope
+        required = {"snapshot_id", "incident_id", "execution_id", "target", "captured_at", "content",
+                    "content_sha256", "integrity_hmac_sha256"}
+        if not isinstance(envelope, dict) or set(envelope) != required or envelope.get("target") != "api":
+            raise HTTPException(422, "Signed API deployment snapshot is required")
+        content = envelope.get("content")
+        deployment = content.get("deployment") if isinstance(content, dict) else None
+        if not isinstance(deployment, dict):
+            raise HTTPException(422, "Deployment identity is missing from the snapshot")
+        version = grant.parameters["version"]
+        if deployment.get("version") != version:
+            raise HTTPException(403, "Requested version does not match the signed deployment snapshot")
+        if not re.fullmatch(r"sha256:[a-f0-9]{64}", str(deployment.get("image_digest", ""))):
+            raise HTTPException(403, "Snapshot image identity is invalid")
+        if not isinstance(deployment.get("config_revision"), str) or not isinstance(deployment.get("resource_limits"), dict):
+            raise HTTPException(403, "Snapshot configuration identity is invalid")
+        try:
+            with open(DEPLOYMENT_CATALOG_FILE, encoding="utf-8") as catalog_file:
+                catalog = json.load(catalog_file)
+            approved = catalog["versions"][version]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(503, "Read-only deployment catalog is unavailable") from exc
+        if (deployment["image_digest"] != approved.get("image_digest")
+                or deployment["config_revision"] != approved.get("profile", {}).get("config_revision")
+                or deployment["resource_limits"] != approved.get("profile", {}).get("resources")):
+            raise HTTPException(403, "Snapshot deployment identity does not match the approved catalog")
+        expected_sha = hashlib.sha256(canonical(content)).hexdigest()
+        if not hmac.compare_digest(expected_sha, str(envelope.get("content_sha256", ""))):
+            raise HTTPException(403, "Snapshot content digest is invalid")
+        try:
+            with open(SNAPSHOT_INTEGRITY_KEY_FILE, "rb") as key_file:
+                key = key_file.read().strip()
+        except OSError as exc:
+            raise HTTPException(503, "Snapshot integrity key is unavailable") from exc
+        if len(key) < 32:
+            raise HTTPException(503, "Snapshot integrity key is not configured")
+        message = canonical({"snapshot_id": str(envelope["snapshot_id"]),
+                            "incident_id": str(envelope["incident_id"]),
+                            "execution_id": str(envelope["execution_id"]), "target": envelope["target"],
+                            "captured_at": str(envelope["captured_at"]), "content": content,
+                            "content_sha256": envelope["content_sha256"]})
+        expected_hmac = hmac.new(key, message, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected_hmac, str(envelope["integrity_hmac_sha256"])):
+            raise HTTPException(403, "Snapshot HMAC verification failed")
 
     @staticmethod
     def _safe_snapshot(data: dict[str, Any]) -> dict[str, Any]:
@@ -144,6 +231,8 @@ class Executor:
     def execute(self, grant: Grant, signature: str) -> dict[str, Any]:
         self._validate(grant, signature)
         grant_data = grant.model_dump(mode="json")
+        if grant.snapshot_envelope is None:
+            grant_data.pop("snapshot_envelope", None)
         grant_hash = hashlib.sha256(canonical(grant_data)).hexdigest()
         now_text = datetime.now(timezone.utc).isoformat()
         db = self._connect()
@@ -160,20 +249,37 @@ class Executor:
             db.close()
 
         try:
-            snapshot_data = self.proxy.inspect_api()
-            snapshot = self._safe_snapshot(snapshot_data)
-            if not snapshot["container_id"] or not snapshot["running_before"] or snapshot["status_before"] != "running":
-                raise RuntimeError("Approved service is not running; restart was not attempted")
-            with closing(self._connect()) as db:
-                db.execute("UPDATE executions SET snapshot_json=?,updated_at=? WHERE action_id=?",
-                           (json.dumps(snapshot, sort_keys=True), datetime.now(timezone.utc).isoformat(), str(grant.action_id)))
-            self.proxy.restart_api()
-            result = {"action_id": str(grant.action_id), "status": "executed", "executed": True,
-                      "target": "api", "snapshot": snapshot}
+            if grant.action_type == "rollback_deployment":
+                envelope = grant.snapshot_envelope
+                deployment = envelope["content"]["deployment"]
+                snapshot = {"snapshot_id": str(envelope["snapshot_id"]), "version": deployment["version"],
+                            "image_digest": deployment["image_digest"], "config_revision": deployment["config_revision"],
+                            "resource_limits": deployment["resource_limits"]}
+                with closing(self._connect()) as db:
+                    db.execute("UPDATE executions SET snapshot_json=?,updated_at=? WHERE action_id=?",
+                               (json.dumps(snapshot, sort_keys=True), datetime.now(timezone.utc).isoformat(), str(grant.action_id)))
+                deployment_result = self.proxy.restore_deployment(grant.parameters["version"])
+                result = {"action_id": str(grant.action_id), "status": "executed", "executed": True,
+                          "target": "api", "deployment": deployment_result, "phase6_4_required": True}
+            else:
+                snapshot_data = self.proxy.inspect_api()
+                snapshot = self._safe_snapshot(snapshot_data)
+                if not snapshot["container_id"] or not snapshot["running_before"] or snapshot["status_before"] != "running":
+                    raise RuntimeError("Approved service is not running; restart was not attempted")
+                with closing(self._connect()) as db:
+                    db.execute("UPDATE executions SET snapshot_json=?,updated_at=? WHERE action_id=?",
+                               (json.dumps(snapshot, sort_keys=True), datetime.now(timezone.utc).isoformat(), str(grant.action_id)))
+                self.proxy.restart_api()
+                result = {"action_id": str(grant.action_id), "status": "executed", "executed": True,
+                          "target": "api", "snapshot": snapshot}
             status = "executed"
         except Exception as exc:
             result = {"action_id": str(grant.action_id), "status": "failed", "executed": False,
                       "error": type(exc).__name__}
+            if isinstance(exc, DeploymentProxyError):
+                result["error"] = exc.code
+                if exc.compensation:
+                    result["compensation"] = exc.compensation
             status = "failed"
         with closing(self._connect()) as db:
             db.execute("UPDATE executions SET status=?,result_json=?,updated_at=? WHERE action_id=?",

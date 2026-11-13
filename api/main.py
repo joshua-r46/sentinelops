@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from dashboard import router as dashboard_router
 
 
 DATABASE_URL = os.getenv(
@@ -101,6 +102,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+app.include_router(dashboard_router)
 
 
 class OrderRequest(BaseModel):

@@ -62,6 +62,10 @@ class DisposableSnapshotIntegration(unittest.TestCase):
         self.assertEqual("verified_hmac", snapshot["integrity"])
         self.assertEqual(str(incident_id), snapshot["incident_id"])
         self.assertEqual(str(execution_id), snapshot["execution_id"])
+        self.assertEqual("v1", snapshot["content"]["deployment"]["version"])
+        self.assertTrue(snapshot["content"]["deployment"]["image_digest"].startswith("sha256:"))
+        self.assertTrue(snapshot["content"]["deployment"]["config_revision"])
+        self.assertIn("memory_bytes", snapshot["content"]["deployment"]["resource_limits"])
         entry = snapshot["content"]["deployment_state"]["entries"][0]
         self.assertEqual("phase6-test-version", entry["version"])
         self.assertNotIn("description", entry)

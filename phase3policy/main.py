@@ -28,6 +28,7 @@ EXECUTOR_SHARED_SECRET = os.getenv("EXECUTOR_SHARED_SECRET", "")
 EXECUTION_TOKEN = os.getenv("EXECUTION_TOKEN", "")
 VERIFIER_URL = os.getenv("VERIFIER_URL", "").rstrip("/")
 VERIFIER_TOKEN = os.getenv("VERIFIER_TOKEN", "")
+TELEGRAM_QUEUE_TOKEN = os.getenv("TELEGRAM_QUEUE_TOKEN", "")
 APPROVER_TOKENS = json.loads(os.getenv("APPROVER_TOKENS_JSON", "{}"))
 APPROVAL_TTL_SECONDS = max(60, int(os.getenv("APPROVAL_TTL_SECONDS", "900")))
 COOLDOWN_SECONDS = max(0, int(os.getenv("ACTION_COOLDOWN_SECONDS", "300")))
@@ -180,6 +181,14 @@ def require_approver(token: str | None):
             return actor
     raise HTTPException(403, "Approval token is not authorized")
 
+def require_telegram_queue(token: str | None):
+    if len(TELEGRAM_QUEUE_TOKEN.encode()) < 32:
+        raise HTTPException(503, "Telegram approval queue access is not configured")
+    if not token:
+        raise HTTPException(401, "Telegram approval queue authorization required")
+    if not secrets.compare_digest(token, TELEGRAM_QUEUE_TOKEN):
+        raise HTTPException(403, "Telegram approval queue authorization is invalid")
+
 @asynccontextmanager
 async def lifespan(app):
     init()
@@ -225,6 +234,17 @@ def get_action(action_id: uuid.UUID):
 @app.get("/actions/{action_id}")
 def action(action_id: uuid.UUID):
     return get_action(action_id)
+
+@app.get("/approvals/pending")
+def pending_approvals(x_telegram_queue_token: str | None = Header(default=None)):
+    """Read-only bounded approval queue for the authenticated Telegram service."""
+    require_telegram_queue(x_telegram_queue_token)
+    with conn() as c:
+        rows = c.execute("""SELECT id,incident_id,action_type,parameters,reason,risk,
+          approval_expires_at,created_at FROM agentshield_action_requests
+          WHERE decision='REQUIRE_APPROVAL' AND status='pending_approval'
+            AND approval_expires_at > %s ORDER BY created_at ASC LIMIT 100""", (now(),)).fetchall()
+    return {"items": rows}
 
 def decide(action_id: uuid.UUID, request: ApprovalRequest, decision: str, token: str | None):
     actor = require_approver(token)

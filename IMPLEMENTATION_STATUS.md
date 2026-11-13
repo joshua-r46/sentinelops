@@ -59,11 +59,34 @@
 
 - Added an opt-in Snapshot Manager for allowlisted API identity/health and deployment ledger state.
 - Snapshots bind to an approved execution and incident, are immutable through the service and database trigger, and are checked against a SHA-256 integrity digest on read.
-- Disposable integration validation covered authorization, approved-action binding, snapshot integrity, corruption detection, and audit events. Stages 6.2–6.6 remain unimplemented.
+- At the time of the Phase 6.1 increment, disposable integration validation covered authorization, approved-action binding, snapshot integrity, corruption detection, and audit events; see later entries for subsequent stages.
 
 ## Phase 6.2 increment
 
 - Added a recovery eligibility/approval policy with incident, source execution, failed-verification, snapshot ownership, age, and typed-action checks.
 - Snapshot HMAC-SHA256 signatures use a separately mounted secret file; the digest stored beside snapshot data is not treated as privileged-tampering protection. Legacy SHA-only snapshots are not recovery-eligible.
 - Recovery decisions and rejections are recorded in an immutable, HMAC-chained audit ledger. The policy has no restoration endpoint or Docker access.
-- Disposable recovery-policy tests cover validity, mismatched IDs, corrupted/expired snapshots, auth, replay/concurrency, limits, unsupported actions, and audit integrity. Stage 6.3 restoration remains unimplemented.
+- Disposable recovery-policy tests cover validity, mismatched IDs, corrupted/expired snapshots, auth, replay/concurrency, limits, unsupported actions, and audit integrity.
+
+## Phase 6.3 increment
+
+- Added local `v1`, healthy `v2`, and intentionally failing `v2-bad` API images and a read-only catalog keyed by immutable local image IDs and approved launch profiles.
+- Added a stable API router and a narrowly typed, HMAC-authenticated upstream switch. The Docker socket proxy creates and health-checks a candidate before cutover, retains incumbents, and makes at most one bounded compensation attempt.
+- Recovery Policy issues an opt-in, one-use `rollback_deployment(api, version)` grant only after the existing eligibility and distinct approval checks. Executor independently verifies the grant, snapshot HMAC, image/config/limits against the catalog, and replay ledger.
+- Recovery and audit results keep the incident escalated and require Phase 6.4 verification. Execution stays disabled by default. Only the proxy mounts the Docker socket.
+- A prior disposable Docker integration pass is documented, but the outer Docker provisioning boundary has not been independently verified in this checkout. Treat that integration claim as unverified until a safe independent daemon is proven.
+
+## Phase 6.4 increment
+
+- Added independent post-restoration probes for router-reported deployment identity/version, service health, application readiness, metrics readiness, and read-only order lookup/input-validation journeys.
+- Recovery Policy now preflights the verifier before starting a restoration, derives expected deployment identity from the integrity-checked snapshot, and requires a matching verifier result before recording recovery as verified.
+- Only the verifier can transition an escalated incident through VERIFYING to RESOLVED. Failed or inconclusive checks return the incident to ESCALATED and write probe samples, timestamps, failure reasons, evidence hashes, and audit records.
+- Unit tests use HTTP mocks and database test doubles. No live recovery or Docker integration has been run for this increment; independent live deployment verification remains unverified.
+
+## Gemini and Telegram integration increment
+
+- Extended the provider-neutral LLM Gateway with the official Google Gen AI Python SDK and Gemini environment configuration; retained the legacy OpenAI-compatible provider behind explicit provider selection.
+- Gateway and Diagnosis Engine validate structured cause, confidence, uncertainty, typed recommendation fields, and evidence UUID membership. Recommendations are stored as diagnosis metadata and never authorize or execute actions.
+- Expanded redaction for credentials, endpoints, common infrastructure identifiers, and IP addresses before cloud-provider calls.
+- Telegram supports allowlisted private-user commands, incident/status/approval reads, and approve/deny calls through the existing Safety Gate. Safety Gate expiration, atomic decisions and its audit remain authoritative; Telegram stores durable update replay protection and a local action audit in a dedicated SQLite volume.
+- Unit tests use mocked providers, HTTP responses, and temporary SQLite. No cloud or Telegram credentials were present in the process environment or configured `.env`, so no live smoke tests were run.
