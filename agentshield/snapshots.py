@@ -4,6 +4,7 @@ This service reads fixed API/deployer endpoints and stores a digest-protected
 snapshot in the AgentShield audit database. It has no Docker or shell access.
 """
 import hashlib
+import hmac
 import json
 import os
 import uuid
@@ -20,6 +21,7 @@ from psycopg.types.json import Jsonb
 
 DB = os.getenv("DATABASE_URL", "postgresql://shopstack:shopstack_dev_password@postgres:5432/shopstack")
 TOKEN = os.getenv("SNAPSHOT_TOKEN", "")
+INTEGRITY_KEY_FILE = os.getenv("SNAPSHOT_INTEGRITY_KEY_FILE", "/run/secrets/snapshot_integrity_key")
 API_URL = os.getenv("SNAPSHOT_API_URL", "http://api:8000").rstrip("/")
 DEPLOYER_URL = os.getenv("SNAPSHOT_DEPLOYER_URL", "http://deployer:8001").rstrip("/")
 MAX_DEPLOYMENTS = 100
@@ -46,6 +48,30 @@ def digest(value: Any) -> str:
     return hashlib.sha256(canonical(value).encode()).hexdigest()
 
 
+def integrity_key() -> bytes:
+    try:
+        with open(INTEGRITY_KEY_FILE, "rb") as key_file:
+            key = key_file.read().strip()
+    except OSError as exc:
+        raise HTTPException(503, "Snapshot integrity key is unavailable") from exc
+    if len(key) < 32:
+        raise HTTPException(503, "Snapshot integrity key must contain at least 32 bytes")
+    return key
+
+
+def integrity_message(snapshot_id, incident_id, execution_id, target, captured_at, content, content_sha256):
+    return canonical({"snapshot_id": str(snapshot_id), "incident_id": str(incident_id),
+                      "execution_id": str(execution_id), "target": target,
+                      "captured_at": captured_at.isoformat(), "content": content,
+                      "content_sha256": content_sha256}).encode()
+
+
+def sign_snapshot(snapshot_id, incident_id, execution_id, target, captured_at, content, content_sha256, key=None):
+    key = key or integrity_key()
+    return hmac.new(key, integrity_message(snapshot_id, incident_id, execution_id, target,
+                                           captured_at, content, content_sha256), hashlib.sha256).hexdigest()
+
+
 class SnapshotRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     incident_id: uuid.UUID
@@ -58,7 +84,8 @@ def init():
         c.execute("""CREATE TABLE IF NOT EXISTS agentshield_snapshots (
           id UUID PRIMARY KEY, incident_id UUID NOT NULL REFERENCES agentshield_incidents(id),
           execution_id UUID NOT NULL UNIQUE, target TEXT NOT NULL, captured_at TIMESTAMPTZ NOT NULL,
-          content JSONB NOT NULL, content_sha256 TEXT NOT NULL)""")
+          content JSONB NOT NULL, content_sha256 TEXT NOT NULL, integrity_hmac_sha256 TEXT)""")
+        c.execute("ALTER TABLE agentshield_snapshots ADD COLUMN IF NOT EXISTS integrity_hmac_sha256 TEXT")
         c.execute("""CREATE OR REPLACE FUNCTION agentshield_reject_snapshot_mutation()
           RETURNS trigger LANGUAGE plpgsql AS $$
           BEGIN RAISE EXCEPTION 'AgentShield snapshots are immutable'; END; $$""")
@@ -107,6 +134,8 @@ async def create_snapshot(request: SnapshotRequest):
     content = await read_snapshot_content()
     snapshot_id = uuid.uuid4()
     content_hash = digest(content)
+    signature = sign_snapshot(snapshot_id, request.incident_id, request.execution_id,
+                              request.target, captured, content, content_hash)
     with conn() as c:
         incident = c.execute("SELECT state FROM agentshield_incidents WHERE id=%s FOR UPDATE", (request.incident_id,)).fetchone()
         if not incident:
@@ -118,15 +147,15 @@ async def create_snapshot(request: SnapshotRequest):
         if not action or action["status"] != "approved" or action["decision"] != "REQUIRE_APPROVAL" or action["action_type"] != "restart_service" or action["parameters"].get("target") != "api":
             raise HTTPException(409, "Snapshot must bind to an approved, allowlisted API restart action")
         try:
-            c.execute("INSERT INTO agentshield_snapshots VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            c.execute("INSERT INTO agentshield_snapshots (id,incident_id,execution_id,target,captured_at,content,content_sha256,integrity_hmac_sha256) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                       (snapshot_id, request.incident_id, request.execution_id, request.target, captured,
-                       Jsonb(content), content_hash))
+                       Jsonb(content), content_hash, signature))
         except psycopg.errors.UniqueViolation:
             raise HTTPException(409, "A pre-action snapshot already exists for this execution")
         c.execute("INSERT INTO agentshield_action_audit (id,action_request_id,event_type,actor,details,created_at) VALUES (%s,%s,'snapshot_created','snapshot_manager',%s,%s)",
                   (uuid.uuid4(), request.execution_id, Jsonb({"snapshot_id": str(snapshot_id),
                    "incident_id": str(request.incident_id), "execution_id": str(request.execution_id),
-                   "content_sha256": content_hash}), captured))
+                   "content_sha256": content_hash, "integrity": "hmac_sha256_external_key"}), captured))
     return {"snapshot_id": snapshot_id, "incident_id": request.incident_id,
             "execution_id": request.execution_id, "target": request.target,
             "captured_at": captured, "content_sha256": content_hash}
@@ -138,7 +167,14 @@ def get_snapshot(snapshot_id: uuid.UUID):
         row = c.execute("SELECT * FROM agentshield_snapshots WHERE id=%s", (snapshot_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Snapshot not found")
-        if digest(row["content"]) != row["content_sha256"]:
+        sha_valid = digest(row["content"]) == row["content_sha256"]
+        hmac_valid = False
+        if sha_valid and row.get("integrity_hmac_sha256"):
+            expected = sign_snapshot(row["id"], row["incident_id"], row["execution_id"],
+                                     row["target"], row["captured_at"], row["content"],
+                                     row["content_sha256"])
+            hmac_valid = hmac.compare_digest(expected, row["integrity_hmac_sha256"])
+        if not sha_valid or (row.get("integrity_hmac_sha256") and not hmac_valid):
             c.execute("INSERT INTO agentshield_action_audit (id,action_request_id,event_type,actor,details,created_at) VALUES (%s,%s,'snapshot_integrity_failed','snapshot_manager',%s,%s)",
                       (uuid.uuid4(), row["execution_id"], Jsonb({"snapshot_id": str(snapshot_id),
                        "incident_id": str(row["incident_id"]), "execution_id": str(row["execution_id"])}), now()))
@@ -147,9 +183,11 @@ def get_snapshot(snapshot_id: uuid.UUID):
             c.execute("INSERT INTO agentshield_action_audit (id,action_request_id,event_type,actor,details,created_at) VALUES (%s,%s,'snapshot_accessed','snapshot_manager',%s,%s)",
                       (uuid.uuid4(), row["execution_id"], Jsonb({"snapshot_id": str(snapshot_id),
                        "incident_id": str(row["incident_id"]), "execution_id": str(row["execution_id"]),
-                       "content_sha256": row["content_sha256"]}), now()))
+                       "content_sha256": row["content_sha256"],
+                   "integrity": "verified_hmac" if hmac_valid else "sha256_only"}), now()))
     if corrupted:
         raise HTTPException(409, "Snapshot integrity verification failed")
+    row["_integrity"] = "verified_hmac" if hmac_valid else "sha256_only"
     return row
 
 
@@ -180,4 +218,6 @@ def retrieve(snapshot_id: uuid.UUID, x_snapshot_token: str | None = Header(defau
     return {"snapshot_id": row["id"], "incident_id": row["incident_id"],
             "execution_id": row["execution_id"], "target": row["target"],
             "captured_at": row["captured_at"], "content": row["content"],
-            "content_sha256": row["content_sha256"], "integrity": "verified"}
+            "content_sha256": row["content_sha256"],
+            "integrity_hmac_sha256": row["integrity_hmac_sha256"],
+            "integrity": row["_integrity"]}

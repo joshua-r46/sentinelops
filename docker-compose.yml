@@ -167,8 +167,11 @@ services:
     environment:
       DATABASE_URL: postgresql://shopstack:shopstack_dev_password@postgres:5432/shopstack
       SNAPSHOT_TOKEN: ${SNAPSHOT_TOKEN:-}
+      SNAPSHOT_INTEGRITY_KEY_FILE: /run/secrets/snapshot_integrity_key
       SNAPSHOT_API_URL: http://api:8000
       SNAPSHOT_DEPLOYER_URL: http://deployer:8001
+    volumes:
+      - ${SNAPSHOT_INTEGRITY_KEY_FILE:-./secrets/snapshot_integrity_key}:/run/secrets/snapshot_integrity_key:ro
     networks:
       - default
     depends_on:
@@ -176,6 +179,27 @@ services:
         condition: service_healthy
       agentshield:
         condition: service_started
+
+  agentshield-recovery-policy:
+    profiles: ["phase6"]
+    build: ./agentshield
+    image: agentshield:recovery-policy
+    container_name: agentshield-recovery-policy
+    restart: unless-stopped
+    command: ["uvicorn", "recovery_policy:app", "--host", "0.0.0.0", "--port", "8007"]
+    environment:
+      DATABASE_URL: postgresql://shopstack:shopstack_dev_password@postgres:5432/shopstack
+      SNAPSHOT_INTEGRITY_KEY_FILE: /run/secrets/snapshot_integrity_key
+      RECOVERY_OPERATOR_TOKENS_JSON: ${RECOVERY_OPERATOR_TOKENS_JSON:-{}}
+      RECOVERY_APPROVER_TOKENS_JSON: ${RECOVERY_APPROVER_TOKENS_JSON:-{}}
+      RECOVERY_MAX_SNAPSHOT_AGE_SECONDS: ${RECOVERY_MAX_SNAPSHOT_AGE_SECONDS:-86400}
+      RECOVERY_MAX_ATTEMPTS_PER_INCIDENT: ${RECOVERY_MAX_ATTEMPTS_PER_INCIDENT:-3}
+    volumes:
+      - ${SNAPSHOT_INTEGRITY_KEY_FILE:-./secrets/snapshot_integrity_key}:/run/secrets/snapshot_integrity_key:ro
+    networks:
+      - default
+    depends_on:
+      - agentshield-snapshot-manager
 
   agentshield-policy:
     build: ./phase3policy

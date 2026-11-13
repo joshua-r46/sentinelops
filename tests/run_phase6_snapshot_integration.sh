@@ -15,6 +15,9 @@ SNAPSHOT="phase6-it-snapshot-$RUN_ID"
 RUNNER="phase6-it-runner-$RUN_ID"
 PG_PASSWORD="$(openssl rand -hex 24)"
 TOKEN="$(openssl rand -hex 32)"
+INTEGRITY_KEY_FILE="$(mktemp)"
+openssl rand -hex 32 > "$INTEGRITY_KEY_FILE"
+chmod 600 "$INTEGRITY_KEY_FILE"
 DATABASE_URL="postgresql://shopstack_it:$PG_PASSWORD@$POSTGRES:5432/shopstack_it"
 API_IMAGE="shopstack-api:phase6-snapshot-it"
 DEPLOYER_IMAGE="shopstack-deployer:phase6-snapshot-it"
@@ -25,6 +28,7 @@ cleanup() {
   ids="$(docker ps -aq --filter "label=$LABEL_KEY=$LABEL_VALUE")"
   if [[ -n "$ids" ]]; then docker rm -fv $ids >/dev/null 2>&1 || true; fi
   if [[ "$NETWORK_CREATED" == 1 ]]; then docker network rm "$NETWORK" >/dev/null 2>&1 || true; fi
+  rm -f "$INTEGRITY_KEY_FILE"
 }
 trap cleanup EXIT
 
@@ -59,6 +63,8 @@ docker run -d --rm --name "$DEPLOYER" --label "$LABEL_KEY=$LABEL_VALUE" --networ
   -e DATABASE_URL="$DATABASE_URL" "$DEPLOYER_IMAGE" >/dev/null
 docker run -d --rm --name "$SNAPSHOT" --label "$LABEL_KEY=$LABEL_VALUE" --network "$NETWORK" \
   -e DATABASE_URL="$DATABASE_URL" -e SNAPSHOT_TOKEN="$TOKEN" \
+  -e SNAPSHOT_INTEGRITY_KEY_FILE=/run/secrets/snapshot_integrity_key \
+  -v "$INTEGRITY_KEY_FILE:/run/secrets/snapshot_integrity_key:ro" \
   -e SNAPSHOT_API_URL="http://$API:8000" -e SNAPSHOT_DEPLOYER_URL="http://$DEPLOYER:8001" \
   "$SNAPSHOT_IMAGE" uvicorn snapshots:app --host 0.0.0.0 --port 8006 >/dev/null
 if ! docker run --rm --name "$RUNNER" --label "$LABEL_KEY=$LABEL_VALUE" --network "$NETWORK" \

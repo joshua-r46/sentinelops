@@ -59,7 +59,7 @@ class DisposableSnapshotIntegration(unittest.TestCase):
         retrieved = httpx.get(SNAPSHOT_URL + "/snapshots/" + snapshot_id, headers=headers, timeout=5)
         self.assertEqual(200, retrieved.status_code, retrieved.text)
         snapshot = retrieved.json()
-        self.assertEqual("verified", snapshot["integrity"])
+        self.assertEqual("verified_hmac", snapshot["integrity"])
         self.assertEqual(str(incident_id), snapshot["incident_id"])
         self.assertEqual(str(execution_id), snapshot["execution_id"])
         entry = snapshot["content"]["deployment_state"]["entries"][0]

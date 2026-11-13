@@ -60,3 +60,10 @@
 - Added an opt-in Snapshot Manager for allowlisted API identity/health and deployment ledger state.
 - Snapshots bind to an approved execution and incident, are immutable through the service and database trigger, and are checked against a SHA-256 integrity digest on read.
 - Disposable integration validation covered authorization, approved-action binding, snapshot integrity, corruption detection, and audit events. Stages 6.2–6.6 remain unimplemented.
+
+## Phase 6.2 increment
+
+- Added a recovery eligibility/approval policy with incident, source execution, failed-verification, snapshot ownership, age, and typed-action checks.
+- Snapshot HMAC-SHA256 signatures use a separately mounted secret file; the digest stored beside snapshot data is not treated as privileged-tampering protection. Legacy SHA-only snapshots are not recovery-eligible.
+- Recovery decisions and rejections are recorded in an immutable, HMAC-chained audit ledger. The policy has no restoration endpoint or Docker access.
+- Disposable recovery-policy tests cover validity, mismatched IDs, corrupted/expired snapshots, auth, replay/concurrency, limits, unsupported actions, and audit integrity. Stage 6.3 restoration remains unimplemented.
