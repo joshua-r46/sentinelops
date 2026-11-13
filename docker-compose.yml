@@ -135,6 +135,28 @@ services:
     depends_on:
       - docker-socket-proxy
 
+  agentshield-verifier:
+    profiles: ["phase5"]
+    build: ./agentshield
+    image: agentshield:independent-verifier
+    container_name: agentshield-independent-verifier
+    restart: unless-stopped
+    command: ["uvicorn", "verifier:app", "--host", "0.0.0.0", "--port", "8005"]
+    environment:
+      DATABASE_URL: postgresql://shopstack:shopstack_dev_password@postgres:5432/shopstack
+      VERIFIER_TOKEN: ${VERIFIER_TOKEN:-}
+      VERIFIER_API_URL: http://api:8000
+      VERIFIER_WORKER_URL: http://worker:8004
+      VERIFIER_PROBE_COUNT: ${VERIFIER_PROBE_COUNT:-3}
+      VERIFIER_PROBE_INTERVAL: ${VERIFIER_PROBE_INTERVAL:-1}
+    networks:
+      - default
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agentshield:
+        condition: service_started
+
   agentshield-policy:
     build: ./phase3policy
     image: agentshield:phase3-policy
@@ -146,6 +168,8 @@ services:
       EXECUTOR_URL: http://agentshield-executor:8004
       EXECUTOR_SHARED_SECRET: ${EXECUTOR_SHARED_SECRET:-}
       EXECUTION_TOKEN: ${EXECUTION_TOKEN:-}
+      VERIFIER_URL: http://agentshield-independent-verifier:8005
+      VERIFIER_TOKEN: ${VERIFIER_TOKEN:-}
     ports:
       - "8003:8003"
     depends_on:

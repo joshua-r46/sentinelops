@@ -18,7 +18,7 @@
 - The Safety Gate uses the architecture action vocabulary, R0-R3 classifications,
   service/dependency blast-radius analysis, action budget, cooldown, evidence
   integrity checks, snapshot requirements, expiring approval requests, and
-  token-bound approver identity. Execution remains deliberately unavailable.
+  token-bound approver identity. Phase 4 adds opt-in, narrowly gated execution.
 - A Rego policy artifact is included for the Gate's OPA endpoint integration.
 - A local operator CLI wraps only the existing authenticated, TTL-bounded
   failure-injector API.
@@ -30,7 +30,7 @@
 - Groq, Cloudflare, and LM Studio adapters are not enabled without provider
   configuration. The existing OpenAI compatibility path remains unchanged.
 - Dashboard, SSE, and Telegram integrations remain deferred.
-- Independent verification and recovery are not included in the current Phase 4 stage.
+- Automatic recovery remains deferred; independent verification is implemented in the Phase 5 increment below.
 
 ## Validation
 
@@ -47,3 +47,10 @@
 - Added a custom Docker socket proxy that forwards only inspect/restart for `shopstack-api`; only that proxy mounts the Docker socket.
 - The Safety Gate now commits approval decisions atomically and uses a conditional one-time execution claim before issuing a signed grant.
 - No active service was restarted, rebuilt, or otherwise mutated. See `PHASE4.md` for the supported boundary and remaining limitations.
+
+## Phase 5 increment
+
+- Added an opt-in, independently deployed read-only Verifier with fixed HTTP probe targets and no Docker socket access.
+- Baselines, consecutive post-action probes, error-rate/latency comparisons, and worker collateral health checks are associated with incident and execution IDs.
+- Results are persisted as evidence and audit events; only passing verification resolves an incident, while failures escalate it.
+- No automatic rollback or recovery was added. See PHASE5.md.

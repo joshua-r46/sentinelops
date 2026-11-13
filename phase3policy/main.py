@@ -26,6 +26,8 @@ EXECUTOR_ENABLED = os.getenv("EXECUTOR_ENABLED", "false").lower() == "true"
 EXECUTOR_URL = os.getenv("EXECUTOR_URL", "").rstrip("/")
 EXECUTOR_SHARED_SECRET = os.getenv("EXECUTOR_SHARED_SECRET", "")
 EXECUTION_TOKEN = os.getenv("EXECUTION_TOKEN", "")
+VERIFIER_URL = os.getenv("VERIFIER_URL", "").rstrip("/")
+VERIFIER_TOKEN = os.getenv("VERIFIER_TOKEN", "")
 APPROVER_TOKENS = json.loads(os.getenv("APPROVER_TOKENS_JSON", "{}"))
 APPROVAL_TTL_SECONDS = max(60, int(os.getenv("APPROVAL_TTL_SECONDS", "900")))
 COOLDOWN_SECONDS = max(0, int(os.getenv("ACTION_COOLDOWN_SECONDS", "300")))
@@ -340,6 +342,33 @@ def execute_action(action_id: uuid.UUID, x_execution_token: str | None = Header(
     audit(action_id, "execution_" + final_status, "safety_gate", {"proposal_sha256": row["proposal_sha256"], "executor_result": result})
     if final_status != "executed":
         raise HTTPException(502, detail={"message": "Executor did not accept the action", "result": result})
+
+    verification = {"status": "unavailable", "reason": "independent verifier is not configured"}
+    if VERIFIER_URL and len(VERIFIER_TOKEN.encode()) >= 32:
+        try:
+            with conn() as c:
+                incident = c.execute("SELECT state FROM agentshield_incidents WHERE id=%s FOR UPDATE", (row["incident_id"],)).fetchone()
+                if not incident:
+                    raise RuntimeError("incident record is missing")
+                incident_state = incident["state"] or "DETECTED"
+                if incident_state not in {"GATED", "APPROVAL_PENDING", "EXECUTING"}:
+                    raise RuntimeError("incident is not in a gated execution state")
+                if incident_state != "EXECUTING":
+                    c.execute("UPDATE agentshield_incidents SET state='EXECUTING',last_seen_at=%s WHERE id=%s", (now(), row["incident_id"]))
+                    c.execute("INSERT INTO agentshield_incident_transitions VALUES (%s,%s,%s,'EXECUTING','executor_action_accepted',%s)", (uuid.uuid4(), row["incident_id"], incident_state, now()))
+            response = httpx.post(VERIFIER_URL + "/verify", json={"incident_id": str(row["incident_id"]), "execution_id": str(action_id), "target": "api"}, headers={"X-Verifier-Token": VERIFIER_TOKEN}, timeout=40, trust_env=False)
+            response.raise_for_status()
+            verification = response.json()
+        except Exception as exc:
+            verification = {"status": "unavailable", "reason": type(exc).__name__}
+            with conn() as c:
+                incident = c.execute("SELECT state FROM agentshield_incidents WHERE id=%s FOR UPDATE", (row["incident_id"],)).fetchone()
+                if incident and incident["state"] in {"EXECUTING", "VERIFYING"}:
+                    previous_state = incident["state"]
+                    c.execute("UPDATE agentshield_incidents SET state='ESCALATED',status='open',last_seen_at=%s WHERE id=%s", (now(), row["incident_id"]))
+                    c.execute("INSERT INTO agentshield_incident_transitions VALUES (%s,%s,%s,'ESCALATED','independent_verification_unavailable',%s)", (uuid.uuid4(), row["incident_id"], previous_state, now()))
+            audit(action_id, "verification_unavailable", "safety_gate", verification)
+    result["verification"] = verification
     return result
 
 @app.get("/actions/{action_id}/audit")

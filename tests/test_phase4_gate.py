@@ -25,7 +25,8 @@ class FakeApprovalDB:
         self.lock = threading.Lock()
         self.row = {"id": uuid.uuid4(), "decision": "REQUIRE_APPROVAL", "status": "pending_approval",
                     "proposal_sha256": "a" * 64,
-                    "approval_expires_at": datetime.now(timezone.utc) + timedelta(minutes=5)}
+                    "approval_expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+                    "incident_id": uuid.uuid4()}
         self.approvals = []
 
     def connection(self):
@@ -69,7 +70,8 @@ class FakeExecutionDB:
         self.row = {"id": uuid.uuid4(), "decision": "REQUIRE_APPROVAL", "status": "approved",
                     "proposal_sha256": "b" * 64, "action_type": "restart_service",
                     "parameters": {"target": "api"},
-                    "approval_expires_at": datetime.now(timezone.utc) + timedelta(minutes=5)}
+                    "approval_expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+                    "incident_id": uuid.uuid4()}
 
     def connection(self):
         return FakeExecutionConnection(self)
@@ -91,6 +93,10 @@ class FakeExecutionConnection:
             if self.db.row["status"] == "executing":
                 self.db.row.update(status=params[0], updated_at=params[1])
             return FakeCursor(dict(self.db.row))
+        if query.startswith("SELECT state FROM agentshield_incidents"):
+            return FakeCursor({"state": "GATED"})
+        if "SET state='EXECUTING'" in query or query.startswith("INSERT INTO agentshield_incident_transitions"):
+            return FakeCursor()
         raise AssertionError("Unexpected SQL in execute test")
 
 
@@ -146,6 +152,47 @@ class GateExecutionAuthTests(unittest.TestCase):
         finally:
             (gate.conn, gate.audit, gate.EXECUTION_TOKEN, gate.EXECUTOR_ENABLED,
              gate.EXECUTOR_URL, gate.EXECUTOR_SHARED_SECRET, gate.httpx.post) = old
+
+
+    def test_executor_acceptance_is_followed_by_incident_execution_linked_verification(self):
+        db = FakeExecutionDB()
+        old = (gate.conn, gate.audit, gate.EXECUTION_TOKEN, gate.EXECUTOR_ENABLED,
+               gate.EXECUTOR_URL, gate.EXECUTOR_SHARED_SECRET, gate.VERIFIER_URL,
+               gate.VERIFIER_TOKEN, gate.httpx.post)
+        secret = "phase4-gate-shared-secret-32-bytes-minimum"
+        verification = {"incident_id": str(db.row["incident_id"]), "execution_id": str(db.row["id"]),
+                        "outcome": "PASSED", "incident_state": "RESOLVED"}
+        posts, audits = [], []
+        def post(url, json, headers, timeout, trust_env):
+            posts.append((url, json, headers))
+            class Response:
+                status_code = 200
+                def __init__(self, body): self.body = body
+                def json(self): return self.body
+                def raise_for_status(self): return None
+            if url == "http://executor/execute":
+                expected = hmac.new(secret.encode(), gate.canonical(json).encode(), hashlib.sha256).hexdigest()
+                if not hmac.compare_digest(expected, headers["X-Gate-Signature"]):
+                    raise AssertionError("Gate signature did not match grant")
+                return Response({"action_id": json["action_id"], "status": "executed", "executed": True})
+            if url == "http://verifier/verify":
+                return Response(verification)
+            raise AssertionError("Unexpected outbound request")
+        gate.conn, gate.audit = db.connection, lambda *a, **kw: audits.append(a)
+        gate.EXECUTION_TOKEN = "operator-token-with-at-least-32-characters"
+        gate.EXECUTOR_ENABLED, gate.EXECUTOR_URL, gate.EXECUTOR_SHARED_SECRET = True, "http://executor", secret
+        gate.VERIFIER_URL, gate.VERIFIER_TOKEN = "http://verifier", "verifier-token-with-at-least-32-characters"
+        gate.httpx.post = post
+        try:
+            result = gate.execute_action(db.row["id"], gate.EXECUTION_TOKEN)
+            self.assertEqual("PASSED", result["verification"]["outcome"])
+            self.assertEqual(str(db.row["incident_id"]), posts[1][1]["incident_id"])
+            self.assertEqual(str(db.row["id"]), posts[1][1]["execution_id"])
+            self.assertEqual("http://verifier/verify", posts[1][0])
+        finally:
+            (gate.conn, gate.audit, gate.EXECUTION_TOKEN, gate.EXECUTOR_ENABLED,
+             gate.EXECUTOR_URL, gate.EXECUTOR_SHARED_SECRET, gate.VERIFIER_URL,
+             gate.VERIFIER_TOKEN, gate.httpx.post) = old
 
     def test_concurrent_approval_requests_commit_only_one_decision(self):
         db = FakeApprovalDB()
