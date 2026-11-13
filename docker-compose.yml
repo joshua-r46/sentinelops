@@ -1,0 +1,116 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: shopstack-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  deployer:
+    build: ./deployer
+    image: shopstack-deployer:dev
+    container_name: shopstack-deployer
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://shopstack:shopstack_dev_password@postgres:5432/shopstack
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: shopstack-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: shopstack
+      POSTGRES_USER: shopstack
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shopstack -d shopstack"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: ./api
+    image: shopstack-api:dev
+    container_name: shopstack-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://shopstack:shopstack_dev_password@postgres:5432/shopstack
+      REDIS_URL: redis://redis:6379/0
+      # Empty by default: failure control endpoints remain disabled until an
+      # operator explicitly supplies this local development token.
+      FAILURE_INJECTOR_TOKEN: ${FAILURE_INJECTOR_TOKEN:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: ./worker
+    image: shopstack-worker:dev
+    container_name: shopstack-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://shopstack:shopstack_dev_password@postgres:5432/shopstack
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  agentshield:
+    build: ./agentshield
+    image: agentshield:phase2
+    container_name: agentshield-monitor
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://shopstack:shopstack_dev_password@postgres:5432/shopstack
+      SHOPSTACK_API_URL: http://api:8000
+      DEPLOYER_URL: http://deployer:8001
+      POLL_SECONDS: 15
+      # LLM use is disabled unless all three values are explicitly supplied.
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+      deployer:
+        condition: service_started
+
+  agentshield-policy:
+    build: ./phase3policy
+    image: agentshield:phase3-policy
+    container_name: agentshield-phase3-policy
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://shopstack:shopstack_dev_password@postgres:5432/shopstack
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  redis_data:
+  postgres_data:
