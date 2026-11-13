@@ -54,3 +54,9 @@
 - Baselines, consecutive post-action probes, error-rate/latency comparisons, and worker collateral health checks are associated with incident and execution IDs.
 - Results are persisted as evidence and audit events; only passing verification resolves an incident, while failures escalate it.
 - No automatic rollback or recovery was added. See PHASE5.md.
+
+## Phase 6.1 increment
+
+- Added an opt-in Snapshot Manager for allowlisted API identity/health and deployment ledger state.
+- Snapshots bind to an approved execution and incident, are immutable through the service and database trigger, and are checked against a SHA-256 integrity digest on read.
+- Disposable integration validation covered authorization, approved-action binding, snapshot integrity, corruption detection, and audit events. Stages 6.2–6.6 remain unimplemented.

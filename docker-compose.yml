@@ -157,6 +157,26 @@ services:
       agentshield:
         condition: service_started
 
+  agentshield-snapshot-manager:
+    profiles: ["phase6"]
+    build: ./agentshield
+    image: agentshield:snapshot-manager
+    container_name: agentshield-snapshot-manager
+    restart: unless-stopped
+    command: ["uvicorn", "snapshots:app", "--host", "0.0.0.0", "--port", "8006"]
+    environment:
+      DATABASE_URL: postgresql://shopstack:shopstack_dev_password@postgres:5432/shopstack
+      SNAPSHOT_TOKEN: ${SNAPSHOT_TOKEN:-}
+      SNAPSHOT_API_URL: http://api:8000
+      SNAPSHOT_DEPLOYER_URL: http://deployer:8001
+    networks:
+      - default
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agentshield:
+        condition: service_started
+
   agentshield-policy:
     build: ./phase3policy
     image: agentshield:phase3-policy
